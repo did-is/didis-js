@@ -1,17 +1,17 @@
-# didis
+# @didis/client
 
 Official TypeScript/JavaScript SDK for the [DID.is](https://did.is) public API: DID resolution with evidence, W3C DID Resolution, verifiable credentials, explicit policies, and MCP/A2A agent trust. Works anywhere `fetch` exists: Node 18+, Deno, Bun, browsers and edge runtimes. Zero dependencies, fully typed, ESM.
 
 ## Install
 
 ```bash
-npm install didis
+npm install @didis/client
 ```
 
 ## Usage
 
 ```ts
-import { DidisClient, DidisError } from "didis";
+import { DidisClient, DidisError } from "@didis/client";
 
 // Defaults to the public API at https://did.is/api.
 // Self-hosting? new DidisClient({ baseUrl: "https://your-host/api" })
@@ -60,7 +60,7 @@ Identifiers are percent-encoded exactly once by the client. Non-2xx responses th
 Monitoring routes require an admin token (`new DidisClient({ adminToken })`) and must only be used server-side. Deliveries are signed:
 
 ```ts
-import { verifyWebhookSignature } from "didis";
+import { verifyWebhookSignature } from "@didis/client";
 
 const ok = await verifyWebhookSignature(
   secret,

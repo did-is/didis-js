@@ -1,5 +1,5 @@
 {
-  "name": "didis",
+  "name": "@didis/client",
   "version": "0.1.0",
   "description": "Official TypeScript/JavaScript SDK for the DID.is public API: DID resolution with evidence, credentials, policies and agent trust",
   "type": "module",

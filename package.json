@@ -1,0 +1,55 @@
+{
+  "name": "didis",
+  "version": "0.1.0",
+  "description": "Official TypeScript/JavaScript SDK for the DID.is public API: DID resolution with evidence, credentials, policies and agent trust",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "did",
+    "w3c",
+    "verifiable-credentials",
+    "identity",
+    "mcp",
+    "a2a",
+    "resolver"
+  ],
+  "author": "DID.is",
+  "license": "MIT",
+  "homepage": "https://did.is/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/did-is/didis-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/did-is/didis-js/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

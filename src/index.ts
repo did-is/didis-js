@@ -1,3 +1,4 @@
+import { subtle } from "./webcrypto.js";
 /**
  * DID.is client SDK (TypeScript — Node 18+, Deno, Bun, browsers, edge runtimes).
  *
@@ -805,8 +806,8 @@ export async function verifyWebhookSignature(secret: string, timestamp: string, 
   const ts = Number(timestamp);
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
   const te = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", te.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, te.encode(`${timestamp}.${body}`)));
+  const key = await (await subtle()).importKey("raw", te.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await (await subtle()).sign("HMAC", key, te.encode(`${timestamp}.${body}`)));
   const expected = `sha256=${Array.from(mac, (b) => b.toString(16).padStart(2, "0")).join("")}`;
   if (expected.length !== signatureHeader.length) return false;
   let diff = 0;
@@ -825,9 +826,9 @@ export async function verifyCustomerMonitorSignature(secret: string, body: strin
   const bytes = new TextEncoder().encode(body);
   if (!match || !Number.isSafeInteger(timestamp) || !Number.isInteger(maxAgeSeconds) || maxAgeSeconds < 1 || maxAgeSeconds > 30 * 86400 || timestamp > now + 60 || now - timestamp >= maxAgeSeconds || bytes.length > 300 * 1024 || !secret) return false;
   try {
-    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const key = await (await subtle()).importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
     const mac = Uint8Array.from(match[2].match(/../g)!, value => parseInt(value, 16));
-    if (!await crypto.subtle.verify("HMAC", key, mac, new TextEncoder().encode(`${match[1]}.${body}`))) return false;
+    if (!await (await subtle()).verify("HMAC", key, mac, new TextEncoder().encode(`${match[1]}.${body}`))) return false;
     const event = JSON.parse(body);
     return event.specVersion === "didis.customer-monitor.v1" && event.createdAt === timestamp
       && /^cevent_[0-9a-f]{64}$/.test(expected.eventId) && event.id === expected.eventId

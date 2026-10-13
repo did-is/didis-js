@@ -15,6 +15,7 @@
  * it per tool call (it makes an outbound request and is rate limited).
  */
 import type { DidisClient, McpInspection, ToolAuthorization } from "./index.js";
+import { subtle } from "./webcrypto.js";
 
 export type DidisGuardErrorCode =
   | "TOOL_DRIFT"
@@ -60,7 +61,7 @@ export function canonicalJson(value: unknown): string {
 }
 
 async function sha256Hex(text: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  const digest = new Uint8Array(await (await subtle()).digest("SHA-256", new TextEncoder().encode(text)));
   return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 

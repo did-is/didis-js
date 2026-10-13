@@ -33,6 +33,13 @@ for await (const ev of didis.stream("did:web:identity.foundation")) {
 
 // Credentials: VC DM 2.0 / 1.1 with Data Integrity (eddsa-jcs-2022, ecdsa-jcs-2019) or VC-JOSE/VC-JWT.
 // RDFC suites, ecdsa-sd-2023 and bbs-2023 are reported as UNSUPPORTED, never as valid.
+const credential = {
+  "@context": ["https://www.w3.org/ns/credentials/v2"],
+  type: ["VerifiableCredential"],
+  issuer: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+  validFrom: "2026-01-01T00:00:00Z",
+  credentialSubject: { id: "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLdmQR63zLFKfvUwi3" },
+};
 const vc = await didis.verifyCredential(credential);
 console.log(vc.status, vc.headline);
 
@@ -44,6 +51,7 @@ const { evaluation } = await didis.evaluatePolicy("did:web:example.com", {
 // Agents.
 const mcp = await didis.inspectMcp("https://mcp.example.com/mcp");
 const card = await didis.inspectA2a("https://agent.example.com");
+const chain: string[] = []; // delegation receipt JWS strings, root first
 const { authorization } = await didis.authorize(chain, "payments.refund", { trustedRoots: ["did:web:example.com"] });
 
 try {
@@ -55,9 +63,53 @@ try {
 
 Identifiers are percent-encoded exactly once by the client. Non-2xx responses throw `DidisError` with the RFC 9457 problem body (including the resolution `trace` where available).
 
+## Guard agent tools
+
+Wrap a tool handler so it runs only when (1) the tool definition the agent received still matches the one you approved and (2) DID.is says the agent's registered delegation grants the tool. Every failure throws `DidisGuardError` and the handler does not run (fail-closed).
+
+```ts
+import { DidisClient, createDidisGuard, pinToolDefinitions } from "@didis/client";
+
+const didis = new DidisClient();
+// Once, after reviewing the server's tools/list: store these pins in your config.
+const pins = await pinToolDefinitions(reviewedTools);
+
+const guard = createDidisGuard({
+  client: didis,
+  agent: process.env.AGENT_DID!, // from configuration, never from model output
+  root: process.env.ROOT_DID,    // require this delegation root
+  pins,
+  requirePins: true,
+});
+
+const createIssue = guard.wrap(
+  { tool: "github:create_issue", definition: () => currentTools.get("github:create_issue") },
+  async (args) => github.createIssue(args),
+);
+```
+
+- The definition check is local (RFC 8785 JCS + SHA-256, the same `definitionSha256` DID.is reports) and makes no network call.
+- The delegation check calls `verifyTool`. An ALLOW is reused for 30 s by default (`allowCacheMs`), never past the delegation expiry; DENY and errors are never cached.
+- Error codes: `TOOL_DRIFT`, `TOOL_DEFINITION_MISSING`, `TOOL_NOT_AUTHORIZED`, `GUARD_UNAVAILABLE`, `GUARD_MISCONFIGURED`.
+- One tool only: `withDidisGuard(handler, { client, agent, root, tool, pin, definition })`.
+- `attestMcpPins(client, endpoint, pins)` asks DID.is to inspect a public MCP server and compares its hashes with your pins. Run it at startup or deploy time, not per call: it is an outbound, rate-limited request, and servers that need login or run on a private network cannot be inspected.
+
 ## Webhooks
 
-Monitoring routes require an admin token (`new DidisClient({ adminToken })`) and must only be used server-side. Deliveries are signed:
+Console project monitor events use `verifyCustomerMonitorSignature`:
+
+```ts
+import { verifyCustomerMonitorSignature } from "@didis/client";
+
+const ok = await verifyCustomerMonitorSignature(
+  secret,
+  rawBody,
+  req.headers["x-didis-signature"],
+  { tenantId, projectId, eventId: req.headers["x-didis-event-id"] },
+);
+```
+
+For self-hosted admin daemon monitoring deliveries, use `verifyWebhookSignature`:
 
 ```ts
 import { verifyWebhookSignature } from "@didis/client";

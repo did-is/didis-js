@@ -244,6 +244,33 @@ export interface Check {
   detail: string;
 }
 
+export interface IssuerTrust {
+  anchor: "DID" | "X509_CERTIFICATE" | "ISSUER_METADATA" | "NONE";
+  result: "NOT_APPLICABLE" | "NOT_ESTABLISHED" | "CALLER_ANCHORED" | "CHAIN_INVALID";
+  trustedListChecked: false;
+  chain?: { sha256: string; subjectCn?: string; issuerCn?: string; notAfter?: string }[];
+  metadataUrl?: string;
+  proves: string;
+  doesNotProve: string;
+}
+
+export interface SdJwtEvidence {
+  sdAlg: string;
+  disclosures: number;
+  decoyDigests: number;
+  registeredClaims: Record<string, unknown>;
+  keyBinding: "VERIFIED" | "ABSENT" | "INVALID" | "UNSUPPORTED" | "INDETERMINATE";
+}
+
+export interface CredentialVerifyOptions {
+  /** JWT `aud` / SD-JWT Key Binding `aud` constraint. */
+  expectedAudience?: string;
+  /** SD-JWT Key Binding `nonce` constraint; without it replay is not excluded. */
+  expectedNonce?: string;
+  /** Caller-chosen X.509 anchors (PEM or base64 DER) for SD-JWT VC `x5c`. Without them `x5c` is never VALID. */
+  trustedIssuerCertificates?: string[];
+}
+
 export interface CredentialVerification {
   status: string;
   headline: string;
@@ -283,6 +310,11 @@ export interface CredentialVerification {
     detail: string;
   }[];
   issuerResolution?: { id: string; outcome?: string; headline?: string; domainBinding?: string; detail: string };
+  /** SD-JWT VC only. Categorical, never a score; EU trusted lists are never checked. */
+  issuerTrust?: IssuerTrust;
+  /** SD-JWT VC only. No disclosed claim values are ever returned. */
+  sdJwt?: SdJwtEvidence;
+  /** For SD-JWT VC: disclosed claim paths and digests only, never values. */
   claims: unknown;
   credential: unknown;
   limitations: string[];
@@ -704,8 +736,13 @@ export class DidisClient {
   }
 
   /** Audience is checked only when an expected recipient is supplied. Pass raw JSON as a string to preserve member identity. */
-  verifyCredential(credential: unknown, options: { expectedAudience?: string } = {}): Promise<CredentialVerification> {
-    return this.request("POST", "/v1/credentials/verify", { credential, expectedAudience: options.expectedAudience });
+  verifyCredential(credential: unknown, options: CredentialVerifyOptions = {}): Promise<CredentialVerification> {
+    return this.request("POST", "/v1/credentials/verify", {
+      credential,
+      expectedAudience: options.expectedAudience,
+      expectedNonce: options.expectedNonce,
+      trustedIssuerCertificates: options.trustedIssuerCertificates,
+    });
   }
 
   evaluatePolicy(did: string, policy: { name?: string; rules: PolicyRules }, credential?: unknown): Promise<PolicyResponse> {
@@ -798,3 +835,4 @@ export async function verifyCustomerMonitorSignature(secret: string, body: strin
       && /^project_[0-9a-f]{64}$/.test(expected.projectId) && event.projectId === expected.projectId;
   } catch { return false; }
 }
+export * from "./guard.js";

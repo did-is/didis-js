@@ -139,3 +139,48 @@ test("attestMcpPins compares DID.is observations with pins", async () => {
   const auth = fakeClient([inspection([], "AUTH_REQUIRED")]);
   assert.equal((await attestMcpPins(auth.client, "https://mcp.example/mcp", pins)).ok, false);
 });
+
+test("MCP-safe tool names map to namespaced capabilities", async () => {
+  const def = { name: "weather_forecast", description: "Forecast for a city.", inputSchema: { type: "object", properties: { city: { type: "string" } } } };
+  const pins = await pinToolDefinitions([def]);
+  const decisions = [];
+  const { client, calls } = fakeClient((url) => allow(new URL(url).searchParams.get("tool")));
+  const guard = createDidisGuard({ client, agent: AGENT, root: ROOT, pins, requirePins: true, onDecision: (e) => decisions.push(e) });
+  const call = { tool: "weather_forecast", capability: "weather:forecast", definition: def };
+  await guard.check(call);
+  // DID.is is asked about the capability; the pin is checked against the MCP tool name
+  assert.equal(new URL(calls[0]).searchParams.get("tool"), "weather:forecast");
+  assert.deepEqual(decisions[0], { tool: "weather_forecast", capability: "weather:forecast", allowed: true, code: undefined, reason: "capability 'weather:forecast' grants 'weather:forecast'", cached: false });
+  // the ALLOW cache is keyed by capability
+  await guard.check(call);
+  assert.equal(calls.length, 1);
+  assert.equal(decisions[1].cached, true);
+  // drift is still detected by tool name, before any network call
+  await rejectsWith(guard.check({ ...call, definition: { ...def, description: "changed" } }), "TOOL_DRIFT");
+  assert.equal(calls.length, 1);
+  // an ALLOW for a different capability is not accepted
+  const other = fakeClient(() => allow("weather:forecast"));
+  await rejectsWith(createDidisGuard({ client: other.client, agent: AGENT }).check({ tool: "weather_forecast", capability: "weather:alerts" }), "GUARD_UNAVAILABLE");
+  // without capability, the tool name is the capability (0.2.0 behaviour)
+  const legacy = fakeClient((url) => allow(new URL(url).searchParams.get("tool")));
+  await createDidisGuard({ client: legacy.client, agent: AGENT }).check({ tool: "weather:forecast" });
+  assert.equal(new URL(legacy.calls[0]).searchParams.get("tool"), "weather:forecast");
+  // one-line form forwards the capability too
+  const one = fakeClient((url) => allow(new URL(url).searchParams.get("tool")));
+  const run = withDidisGuard(async () => "ok", { client: one.client, agent: AGENT, tool: "weather_forecast", capability: "weather:forecast", pin: pins.weather_forecast, definition: def });
+  assert.equal(await run(), "ok");
+  assert.equal(new URL(one.calls[0]).searchParams.get("tool"), "weather:forecast");
+});
+
+test("capabilities must be exact and well-formed", async () => {
+  const { client, calls } = fakeClient(() => allow("x"));
+  const guard = createDidisGuard({ client, agent: AGENT });
+  for (const capability of ["*", "weather:*", "a::b", ":a", "a:", "two words", "", " weather:forecast"]) {
+    await assert.rejects(guard.check({ tool: "t", capability }), (e) => e instanceof DidisGuardError && e.code === "GUARD_MISCONFIGURED" && e.detail.capability === capability, capability);
+  }
+  assert.equal(calls.length, 0);
+  // DENY detail carries both names
+  const d = fakeClient([deny("payments:refund")]);
+  await assert.rejects(createDidisGuard({ client: d.client, agent: AGENT }).check({ tool: "payments_refund", capability: "payments:refund" }),
+    (e) => e.code === "TOOL_NOT_AUTHORIZED" && e.tool === "payments_refund" && e.detail.capability === "payments:refund");
+});

@@ -6,8 +6,14 @@
  *     hashes to the SHA-256 you approved (same RFC 8785 JCS hash DID.is reports as
  *     `definitionSha256`). Catches MCP "rug-pull" drift, including servers DID.is cannot reach.
  *  2. Delegation (DID.is `verify-tool`): the configured agent DID holds a registered, VALID
- *     delegation whose leaf capabilities grant the tool. ALLOW is cached briefly; DENY and
- *     errors are never cached.
+ *     delegation whose leaf capabilities grant the tool's capability. ALLOW is cached briefly;
+ *     DENY and errors are never cached.
+ *
+ * Tool name vs capability: MCP tool names may only use `A-Z a-z 0-9 _ - .` (SEP-986), while
+ * DID.is capabilities are namespaced with `:` (e.g. `weather:forecast`). Pass both when they
+ * differ: `{ tool: "weather_forecast", capability: "weather:forecast" }`. Pins are keyed by the
+ * tool name (what `tools/list` returns); DID.is is asked about the capability. When
+ * `capability` is omitted, the tool name is used as the capability.
  *
  * Any failure (drift, DENY, network error, 429, malformed answer) throws `DidisGuardError`
  * and the handler is not called. `attestMcpPins` is an optional, separate startup check that
@@ -110,12 +116,17 @@ export interface DidisGuardOptions {
   /** How long an ALLOW is reused (ms). Default 30 s; 0 disables. Capped by the delegation expiry. */
   allowCacheMs?: number;
   /** Called after every decision (for audit logs). Must not throw. */
-  onDecision?: (event: { tool: string; allowed: boolean; code?: DidisGuardErrorCode; reason: string; cached: boolean }) => void;
+  onDecision?: (event: { tool: string; capability: string; allowed: boolean; code?: DidisGuardErrorCode; reason: string; cached: boolean }) => void;
 }
 
 export interface GuardCallOptions {
-  /** The tool name as granted by capabilities, e.g. `github:create_issue`. */
+  /** The tool name the agent sees (MCP `tools/list` name, pin key), e.g. `github_create_issue`. */
   tool: string;
+  /**
+   * The DID.is capability this tool needs, e.g. `github:create_issue`. Defaults to `tool`.
+   * Must be an exact capability (no `*`): wildcards belong in delegations, not in tool calls.
+   */
+  capability?: string;
   /** The definition the agent received, or a function returning the current one. */
   definition?: Definition;
 }
@@ -130,6 +141,8 @@ export interface DidisGuard {
 }
 
 const DID = /^did:[a-z0-9]+:\S+$/;
+/** An exact DID.is capability: `:`-separated non-empty segments, no whitespace, no `*`. */
+const CAPABILITY = /^[^\s:*]+(?::[^\s:*]+)*$/;
 
 export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
   const { client, agent, root, pins = {}, requirePins = false, onDecision } = options;
@@ -144,76 +157,80 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
   const pinFor = (tool: string) => (Object.prototype.hasOwnProperty.call(pins, tool) ? pins[tool] : undefined);
   const allowed = new Map<string, number>();
 
-  const report = (tool: string, ok: boolean, reason: string, cached: boolean, code?: DidisGuardErrorCode) => {
+  const report = (tool: string, capability: string, ok: boolean, reason: string, cached: boolean, code?: DidisGuardErrorCode) => {
     try {
-      onDecision?.({ tool, allowed: ok, code, reason, cached });
+      onDecision?.({ tool, capability, allowed: ok, code, reason, cached });
     } catch {
       /* audit hooks must not change the decision */
     }
   };
-  const fail = (code: DidisGuardErrorCode, tool: string, reason: string, detail?: Record<string, unknown>): never => {
-    report(tool, false, reason, false, code);
-    throw new DidisGuardError(code, tool, reason, detail);
+  const fail = (code: DidisGuardErrorCode, tool: string, capability: string, reason: string, detail?: Record<string, unknown>): never => {
+    report(tool, capability, false, reason, false, code);
+    throw new DidisGuardError(code, tool, reason, { ...detail, capability });
   };
 
-  async function checkDefinition(tool: string, definition: Definition | undefined): Promise<void> {
+  async function checkDefinition(tool: string, capability: string, definition: Definition | undefined): Promise<void> {
     const pin = pinFor(tool);
     if (pin === undefined) {
-      if (requirePins) fail("TOOL_DEFINITION_MISSING", tool, `no pinned definition for '${tool}'`);
+      if (requirePins) fail("TOOL_DEFINITION_MISSING", tool, capability, `no pinned definition for '${tool}'`);
       return;
     }
     let def: unknown;
     try {
       def = typeof definition === "function" ? await (definition as () => unknown)() : definition;
     } catch {
-      return fail("TOOL_DEFINITION_MISSING", tool, `could not read the current definition of '${tool}'`);
+      return fail("TOOL_DEFINITION_MISSING", tool, capability, `could not read the current definition of '${tool}'`);
     }
-    if (def === undefined || def === null) fail("TOOL_DEFINITION_MISSING", tool, `'${tool}' is pinned but no definition was supplied`);
+    if (def === undefined || def === null) fail("TOOL_DEFINITION_MISSING", tool, capability, `'${tool}' is pinned but no definition was supplied`);
     let actual: string;
     try {
       actual = await toolDefinitionSha256(def);
     } catch {
-      return fail("TOOL_DRIFT", tool, `the definition of '${tool}' is not valid JSON`);
+      return fail("TOOL_DRIFT", tool, capability, `the definition of '${tool}' is not valid JSON`);
     }
-    if ((def as { name?: unknown }).name !== tool) fail("TOOL_DRIFT", tool, `definition name does not match '${tool}'`, { expected: pin, actual });
-    if (actual !== pin) fail("TOOL_DRIFT", tool, `definition of '${tool}' changed since it was approved`, { expected: pin, actual });
+    if ((def as { name?: unknown }).name !== tool) fail("TOOL_DRIFT", tool, capability, `definition name does not match '${tool}'`, { expected: pin, actual });
+    if (actual !== pin) fail("TOOL_DRIFT", tool, capability, `definition of '${tool}' changed since it was approved`, { expected: pin, actual });
   }
 
-  async function checkDelegation(tool: string): Promise<void> {
+  async function checkDelegation(tool: string, capability: string): Promise<void> {
     const now = Date.now();
-    const until = allowed.get(tool);
+    const until = allowed.get(capability);
     if (until !== undefined && until > now) {
-      report(tool, true, "cached ALLOW", true);
+      report(tool, capability, true, "cached ALLOW", true);
       return;
     }
-    allowed.delete(tool);
+    allowed.delete(capability);
     let auth: ToolAuthorization;
     try {
-      auth = await client.verifyTool(agent, tool, root);
+      auth = await client.verifyTool(agent, capability, root);
     } catch (e) {
       const status = (e as { status?: number }).status;
-      return fail("GUARD_UNAVAILABLE", tool, `DID.is verify-tool failed${status ? ` (HTTP ${status})` : ""}`, { status });
+      return fail("GUARD_UNAVAILABLE", tool, capability, `DID.is verify-tool failed${status ? ` (HTTP ${status})` : ""}`, { status });
     }
-    const exact = auth && auth.decision === "ALLOW" && auth.authorized === true && auth.agent === agent && auth.tool === tool;
+    const exact = auth && auth.decision === "ALLOW" && auth.authorized === true && auth.agent === agent && auth.tool === capability;
     if (!exact) {
       if (auth && (auth.decision === "DENY" || auth.authorized === false)) {
-        fail("TOOL_NOT_AUTHORIZED", tool, auth.reason || "delegation does not grant this tool", { matchedCapability: auth.matchedCapability });
+        fail("TOOL_NOT_AUTHORIZED", tool, capability, auth.reason || "delegation does not grant this capability", { matchedCapability: auth.matchedCapability });
       }
-      fail("GUARD_UNAVAILABLE", tool, "DID.is returned an unexpected authorization answer");
+      fail("GUARD_UNAVAILABLE", tool, capability, "DID.is returned an unexpected authorization answer");
     }
-    if (root !== undefined && auth.root !== root) fail("TOOL_NOT_AUTHORIZED", tool, "delegation root does not match the configured root");
+    if (root !== undefined && auth.root !== root) fail("TOOL_NOT_AUTHORIZED", tool, capability, "delegation root does not match the configured root");
     if (allowCacheMs > 0) {
       const expires = auth.expires ? Date.parse(auth.expires) : NaN;
       const until2 = Math.min(now + allowCacheMs, Number.isFinite(expires) ? expires : now + allowCacheMs);
-      if (until2 > now) allowed.set(tool, until2);
+      if (until2 > now) allowed.set(capability, until2);
     }
-    report(tool, true, auth.reason, false);
+    report(tool, capability, true, auth.reason, false);
   }
 
-  async function check({ tool, definition }: GuardCallOptions): Promise<void> {
-    if (typeof tool !== "string" || !tool.trim() || tool !== tool.trim()) fail("GUARD_MISCONFIGURED", String(tool), "tool must be a non-empty, trimmed name");
-    await checkDefinition(tool, definition);
-    await checkDelegation(tool);
+  async function check({ tool, capability, definition }: GuardCallOptions): Promise<void> {
+    if (typeof tool !== "string" || !tool.trim() || tool !== tool.trim()) fail("GUARD_MISCONFIGURED", String(tool), String(capability ?? tool), "tool must be a non-empty, trimmed name");
+    const cap = capability === undefined ? tool : capability;
+    if (typeof cap !== "string" || !CAPABILITY.test(cap)) {
+      fail("GUARD_MISCONFIGURED", tool, String(cap), "capability must be exact: ':'-separated non-empty segments, no spaces, no '*'");
+    }
+    await checkDefinition(tool, cap, definition);
+    await checkDelegation(tool, cap);
   }
 
   return {
@@ -232,16 +249,16 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
 }
 
 /**
- * One-line form: `withDidisGuard(handler, { client, agent, root, tool, pin, definition })`.
+ * One-line form: `withDidisGuard(handler, { client, agent, root, tool, capability, pin, definition })`.
  * For several tools, create one guard with `createDidisGuard` so the ALLOW cache is shared.
  */
 export function withDidisGuard<A extends unknown[], R>(
   handler: (...args: A) => R | Promise<R>,
   options: Omit<DidisGuardOptions, "pins"> & GuardCallOptions & { pin?: string },
 ): (...args: A) => Promise<Awaited<R>> {
-  const { tool, definition, pin, ...rest } = options;
+  const { tool, capability, definition, pin, ...rest } = options;
   const guard = createDidisGuard({ ...rest, pins: pin ? { [tool]: pin } : undefined });
-  return guard.wrap({ tool, definition }, handler);
+  return guard.wrap({ tool, capability, definition }, handler);
 }
 
 export interface McpAttestation {

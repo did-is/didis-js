@@ -83,15 +83,24 @@ const guard = createDidisGuard({
 });
 
 const createIssue = guard.wrap(
-  { tool: "github:create_issue", definition: () => currentTools.get("github:create_issue") },
+  {
+    tool: "github_create_issue",          // the name in tools/list (pin key)
+    capability: "github:create_issue",    // what the delegation must grant
+    definition: () => currentTools.get("github_create_issue"),
+  },
   async (args) => github.createIssue(args),
 );
 ```
 
+**Tool name vs capability.** MCP and OpenAI tool names may only contain letters, digits, `_`, `-` and `.`, so a tool cannot be called `github:create_issue`. DID.is capabilities use `:` namespaces so that `github:*` can grant a whole group. Pass both: `tool` is used for the pin and error messages, `capability` is what DID.is is asked about. Without `capability`, the tool name is used. A capability must be exact (no `*`, no empty segments, no spaces); an invalid one throws `GUARD_MISCONFIGURED` before any network call. Since 0.2.1.
+
+Guarding MCP clients, LangChain and the OpenAI Agents SDK: see [`examples/`](examples/) and [Guard agent tools](https://docs.did.is/build/guard-tools/#use-with-mcp-and-agent-frameworks).
+
 - The definition check is local (RFC 8785 JCS + SHA-256, the same `definitionSha256` DID.is reports) and makes no network call.
 - The delegation check calls `verifyTool`. An ALLOW is reused for 30 s by default (`allowCacheMs`), never past the delegation expiry; DENY and errors are never cached.
 - Error codes: `TOOL_DRIFT`, `TOOL_DEFINITION_MISSING`, `TOOL_NOT_AUTHORIZED`, `GUARD_UNAVAILABLE`, `GUARD_MISCONFIGURED`.
-- One tool only: `withDidisGuard(handler, { client, agent, root, tool, pin, definition })`.
+- One tool only: `withDidisGuard(handler, { client, agent, root, tool, capability, pin, definition })`.
+- `onDecision` and `DidisGuardError.detail` include both `tool` and `capability`.
 - `attestMcpPins(client, endpoint, pins)` asks DID.is to inspect a public MCP server and compares its hashes with your pins. Run it at startup or deploy time, not per call: it is an outbound, rate-limited request, and servers that need login or run on a private network cannot be inspected.
 
 ## Webhooks

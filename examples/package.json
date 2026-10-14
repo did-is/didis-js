@@ -1,0 +1,26 @@
+{
+  "name": "didis-client-examples",
+  "private": true,
+  "type": "module",
+  "description": "Runnable examples for @didis/client",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "delegation": "node delegation-chain.mjs",
+    "guard": "node guard-tool.mjs",
+    "webhook": "node webhook-receiver.mjs --self-test",
+    "mcp": "node mcp-client.mjs",
+    "langchain": "node langchain-tool.mjs",
+    "openai-agents": "node openai-agents-tool.mjs"
+  },
+  "dependencies": {
+    "@didis/client": "^0.2.1"
+  },
+  "optionalDependencies": {
+    "@langchain/core": "^1.2.17",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@openai/agents": "^0.20.0",
+    "zod": "^4.1.0"
+  }
+}

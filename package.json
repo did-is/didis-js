@@ -1,6 +1,6 @@
 {
   "name": "@didis/client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Official TypeScript/JavaScript SDK for the DID.is public API: DID resolution with evidence, credentials, policies and agent trust",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,7 +15,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "engines": {

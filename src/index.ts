@@ -150,6 +150,20 @@ export interface DomainBindingEvidence {
   detail: string;
 }
 
+/** One `alsoKnownAs` value checked for a reciprocal link back to the DID. */
+export interface LinkedAccountEvidence {
+  /** The `alsoKnownAs` value exactly as declared. */
+  value: string;
+  /** `WEB_ORIGIN` | `WEB_PAGE` | `SAME_ORIGIN` | `DID` | `OTHER` */
+  kind: string;
+  origin?: string;
+  /** `CONFIRMED` | `NOT_CONFIRMED` | `FAILED` | `UNSUPPORTED` | `UNREACHABLE` | `NOT_CHECKABLE` */
+  status: string;
+  configurationStatus?: string;
+  configurationSha256?: string;
+  detail: string;
+}
+
 export interface LogEntryEvidence {
   versionId: string;
   versionNumber: number;
@@ -217,6 +231,8 @@ export interface Evidence {
   keys: KeyEvidence[];
   services: ServiceEvidence[];
   domainBinding?: DomainBindingEvidence;
+  /** Reciprocal checks of `alsoKnownAs`; absent when nothing is declared. */
+  linkedAccounts?: LinkedAccountEvidence[];
   tls?: TlsEvidence;
   history?: HistoryEvidence;
 }
@@ -526,6 +542,8 @@ export interface PolicyRules {
   requireKeyRelationship?: string;
   domainBinding?: "required" | "optional";
   tlsMinDaysRemaining?: number;
+  /** 1–4 bare https origins that must be declared in `alsoKnownAs` and link back to the DID. */
+  linkedAccounts?: string[];
   verifiableHistory?: "required";
   maxCacheAgeSeconds?: number;
   credentialStatus?: "active";
@@ -635,6 +653,17 @@ export interface DidisClientOptions {
 /** Public DID.is API. Point `baseUrl` at your own deployment when self-hosting. */
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
+/** Package version, kept equal to package.json (checked by the test suite). */
+export const VERSION = "0.2.3";
+
+/**
+ * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.
+ * Only the product name and version are sent. Browsers are left alone: there the browser
+ * controls the user agent and an extra header would add a CORS preflight to every call.
+ */
+const SDK_HEADERS: Record<string, string> =
+  typeof (globalThis as { document?: unknown }).document === "undefined" ? { "user-agent": `didis-client/${VERSION}` } : {};
+
 const enc = (s: string) => encodeURIComponent(s.trim());
 
 export class DidisClient {
@@ -658,7 +687,7 @@ export class DidisClient {
       const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         signal: controller.signal,
-        headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+        headers: { ...SDK_HEADERS, accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
       const text = await res.text();
@@ -707,7 +736,7 @@ export class DidisClient {
   /** Live resolution over server-sent events. */
   async *stream(did: string, opts: { noCache?: boolean } = { noCache: true }): AsyncGenerator<StreamEvent> {
     const res = await this.fetchImpl(`${this.baseUrl}/v1/stream/${enc(did)}${opts.noCache ? "?noCache=true" : ""}`, {
-      headers: { accept: "text/event-stream" },
+      headers: { ...SDK_HEADERS, accept: "text/event-stream" },
     });
     if (!res.ok || !res.body) throw new DidisError(res.status, { type: "about:blank", title: `HTTP ${res.status}`, detail: "stream failed" });
     const reader = res.body.getReader();

@@ -4,6 +4,16 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-18
+
+### Added
+
+- Requests now carry `user-agent: didis-client/<version>` (Node, Deno, Bun and other non-browser runtimes; browsers keep their own user agent). Only the package name and version are sent, so DID.is can count SDK use separately from other HTTP clients. New export `VERSION`.
+
+- Type `LinkedAccountEvidence` and `Evidence.linkedAccounts`: each `alsoKnownAs` value with whether that website links back to the DID (`CONFIRMED`, `NOT_CONFIRMED`, `FAILED`, `UNSUPPORTED`, `UNREACHABLE`, `NOT_CHECKABLE`). A confirmation proves the same party controls the website origin and the DID; it does not prove who that party is.
+
+- Policy rule `linkedAccounts` in `PolicyRules`: 1–4 https origins (for example `["https://shop.example"]`) that must be listed in the DID's `alsoKnownAs` and confirm the DID back. Use it to require "this DID belongs to our official website" in one policy call.
+
 ## [0.2.2] - 2026-10-18
 
 ### Added
@@ -46,7 +56,8 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/did-is/didis-js/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/did-is/didis-js/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/did-is/didis-js/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/did-is/didis-js/compare/v0.1.0...v0.2.0

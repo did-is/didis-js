@@ -51,3 +51,14 @@ test("admin routes refuse to run without a token", async () => {
   await assert.rejects(new DidisClient({ fetch: fetchImpl }).watches(), /adminToken/);
   assert.equal(calls.length, 0);
 });
+
+test("identifies itself as didis-client with the package version", async () => {
+  const { calls, fetchImpl } = mock([{ status: 200, body: {} }, { status: 200, body: {} }]);
+  const { VERSION } = await import("../dist/index.js");
+  const pkg = JSON.parse(await (await import("node:fs/promises")).readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(VERSION, pkg.version);
+  const c = new DidisClient({ fetch: fetchImpl });
+  await c.health();
+  await c.verifyCredential({}).catch(() => {});
+  for (const call of calls) assert.equal(call.init.headers["user-agent"], `didis-client/${pkg.version}`);
+});

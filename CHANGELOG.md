@@ -4,6 +4,12 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-18
+
+### Added
+
+- `verifyCredential` option `requiredClaims` (`ClaimRequirement[]`): check conditions such as `{ path: "/age_over_18", equals: true }` without receiving claim values. The response field `requirements` (`RequirementsOutcome`) reports `met` and a per-path result; conditions are evaluated only for a `VALID` credential.
+
 ## [0.2.1] - 2026-10-14
 
 ### Added
@@ -40,7 +46,8 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/did-is/didis-js/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/did-is/didis-js/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/did-is/didis-js/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/did-is/didis-js/releases/tag/v0.1.0

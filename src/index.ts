@@ -270,6 +270,23 @@ export interface CredentialVerifyOptions {
   expectedNonce?: string;
   /** Caller-chosen X.509 anchors (PEM or base64 DER) for SD-JWT VC `x5c`. Without them `x5c` is never VALID. */
   trustedIssuerCertificates?: string[];
+  /**
+   * Conditions checked without returning claim values, e.g. `[{ path: "/age_over_18", equals: true }]`.
+   * Paths are JSON Pointers into the issuer-signed claims; `equals` is a boolean, integer or string.
+   * Evaluated only for a VALID credential; see `CredentialVerification.requirements`.
+   */
+  requiredClaims?: ClaimRequirement[];
+}
+
+export interface ClaimRequirement {
+  path: string;
+  equals: boolean | number | string;
+}
+
+export interface RequirementsOutcome {
+  /** True only when the credential is VALID and every condition is SATISFIED. */
+  met: boolean;
+  results: { path: string; result: "SATISFIED" | "NOT_SATISFIED" | "NOT_DISCLOSED" | "NOT_EVALUATED" }[];
 }
 
 export interface CredentialVerification {
@@ -315,6 +332,8 @@ export interface CredentialVerification {
   issuerTrust?: IssuerTrust;
   /** SD-JWT VC only. No disclosed claim values are ever returned. */
   sdJwt?: SdJwtEvidence;
+  /** Present only when `requiredClaims` was sent. Never contains claim values. */
+  requirements?: RequirementsOutcome;
   /** For SD-JWT VC: disclosed claim paths and digests only, never values. */
   claims: unknown;
   credential: unknown;
@@ -743,6 +762,7 @@ export class DidisClient {
       expectedAudience: options.expectedAudience,
       expectedNonce: options.expectedNonce,
       trustedIssuerCertificates: options.trustedIssuerCertificates,
+      requiredClaims: options.requiredClaims,
     });
   }
 

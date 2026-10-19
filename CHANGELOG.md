@@ -4,6 +4,12 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-19
+
+### Added
+
+- Automatic wait-and-retry for `429` (request budget used up) and `503` (temporarily overloaded) responses that carry `Retry-After`. By default the client retries up to 2 times and never waits longer than 10 seconds per attempt; a short random delay is added so clients refused together do not return together. Both statuses are refused before the request is processed, so retrying is safe for every call. Tune with `new DidisClient({ retry: { maxRetries, maxWaitMs } })` or turn off with `retry: false`. When retries run out, the last `DidisError` is thrown as before, with `problem.retryAfter`.
+
 ## [0.2.3] - 2026-10-18
 
 ### Added
@@ -56,7 +62,8 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/did-is/didis-js/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/did-is/didis-js/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/did-is/didis-js/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/did-is/didis-js/compare/v0.2.0...v0.2.1

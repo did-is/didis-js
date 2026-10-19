@@ -648,13 +648,31 @@ export interface DidisClientOptions {
   adminToken?: string;
   timeoutMs?: number;
   fetch?: typeof fetch;
+  /**
+   * Automatic wait-and-retry when the API answers 429 (request budget used up) or 503
+   * (temporarily overloaded) with a `Retry-After` header. Such refusals happen before the
+   * request is processed, so retrying is safe for every call. Default: up to 2 retries,
+   * never waiting longer than 10 s for one retry. Pass `false` to turn it off.
+   */
+  retry?: false | { maxRetries?: number; maxWaitMs?: number };
 }
+
+/** Milliseconds to wait from a `Retry-After` value (delta-seconds or HTTP-date); null if unusable. */
+export function retryAfterMs(value: string | null | undefined, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const v = value.trim();
+  if (/^\d+$/.test(v)) return Number(v) * 1000;
+  const at = Date.parse(v);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Public DID.is API. Point `baseUrl` at your own deployment when self-hosting. */
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
 /** Package version, kept equal to package.json (checked by the test suite). */
-export const VERSION = "0.2.3";
+export const VERSION = "0.2.4";
 
 /**
  * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.
@@ -671,6 +689,8 @@ export class DidisClient {
   private readonly adminToken?: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly maxRetries: number;
+  private readonly maxWaitMs: number;
 
   constructor(options: string | DidisClientOptions = {}) {
     const o: DidisClientOptions = typeof options === "string" ? { baseUrl: options } : options;
@@ -678,9 +698,33 @@ export class DidisClient {
     this.adminToken = o.adminToken;
     this.timeoutMs = o.timeoutMs ?? 30_000;
     this.fetchImpl = o.fetch ?? fetch;
+    this.maxRetries = o.retry === false ? 0 : Math.max(0, Math.floor(o.retry?.maxRetries ?? 2));
+    this.maxWaitMs = o.retry === false ? 0 : Math.max(0, o.retry?.maxWaitMs ?? 10_000);
+  }
+
+  /**
+   * Waits out a 429/503 refusal when the server says how long, within the configured bounds.
+   * A small random delay spreads out many clients that were refused at the same moment.
+   */
+  private async backoff(attempt: number, status: number, retryAfter: string | null): Promise<boolean> {
+    if (attempt >= this.maxRetries || (status !== 429 && status !== 503)) return false;
+    const wait = retryAfterMs(retryAfter);
+    if (wait === null || wait > this.maxWaitMs) return false;
+    await sleep(wait + Math.floor(Math.random() * 250));
+    return true;
   }
 
   private async request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.once<T>(method, path, body, headers);
+      } catch (e) {
+        if (!(e instanceof DidisError) || !(await this.backoff(attempt, e.status, e.problem.retryAfter ?? null))) throw e;
+      }
+    }
+  }
+
+  private async once<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {

@@ -37,7 +37,7 @@ test("query-string inspectors and POST bodies", async () => {
 
 test("non-2xx throws DidisError with RFC 9457 problem and Retry-After", async () => {
   const { fetchImpl } = mock([{ status: 429, body: { type: "t", title: "Too many", detail: "slow down", code: "RATE_LIMITED" }, headers: { "content-type": "application/problem+json", "retry-after": "7" } }]);
-  await assert.rejects(new DidisClient({ fetch: fetchImpl }).fastVerifyDid("did:key:z"), (e) => {
+  await assert.rejects(new DidisClient({ fetch: fetchImpl, retry: false }).fastVerifyDid("did:key:z"), (e) => {
     assert.ok(e instanceof DidisError);
     assert.equal(e.status, 429);
     assert.equal(e.problem.code, "RATE_LIMITED");
@@ -61,4 +61,39 @@ test("identifies itself as didis-client with the package version", async () => {
   await c.health();
   await c.verifyCredential({}).catch(() => {});
   for (const call of calls) assert.equal(call.init.headers["user-agent"], `didis-client/${pkg.version}`);
+});
+
+test("waits out a 429 with Retry-After and retries (bounded, can be disabled)", async () => {
+  const limited = { status: 429, body: { title: "Rate limited", detail: "wait", code: "RATE_LIMITED" }, headers: { "content-type": "application/problem+json", "retry-after": "0" } };
+  let m = mock([limited, { status: 200, body: { status: "ok" } }]);
+  assert.deepEqual(await new DidisClient({ fetch: m.fetchImpl }).health(), { status: "ok" });
+  assert.equal(m.calls.length, 2);
+
+  // Gives up after maxRetries and surfaces the last problem.
+  m = mock([limited, limited, limited, limited]);
+  await assert.rejects(new DidisClient({ fetch: m.fetchImpl }).health(), (e) => e instanceof DidisError && e.status === 429);
+  assert.equal(m.calls.length, 3);
+
+  // Disabled: one call only.
+  m = mock([limited, { status: 200, body: {} }]);
+  await assert.rejects(new DidisClient({ fetch: m.fetchImpl, retry: false }).health());
+  assert.equal(m.calls.length, 1);
+
+  // A wait longer than maxWaitMs is not slept through.
+  m = mock([{ ...limited, headers: { ...limited.headers, "retry-after": "30" } }, { status: 200, body: {} }]);
+  await assert.rejects(new DidisClient({ fetch: m.fetchImpl }).health());
+  assert.equal(m.calls.length, 1);
+
+  // Other errors are never retried.
+  m = mock([{ status: 400, body: { title: "Bad", detail: "x" }, headers: { "retry-after": "0" } }, { status: 200, body: {} }]);
+  await assert.rejects(new DidisClient({ fetch: m.fetchImpl }).health());
+  assert.equal(m.calls.length, 1);
+});
+
+test("retryAfterMs reads delta-seconds and HTTP-dates", async () => {
+  const { retryAfterMs } = await import("../dist/index.js");
+  assert.equal(retryAfterMs("3"), 3000);
+  assert.equal(retryAfterMs("Thu, 01 Jan 1970 00:00:10 GMT", 4000), 6000);
+  assert.equal(retryAfterMs("soon"), null);
+  assert.equal(retryAfterMs(undefined), null);
 });

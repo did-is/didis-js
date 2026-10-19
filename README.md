@@ -63,6 +63,8 @@ try {
 
 Identifiers are percent-encoded exactly once by the client. Non-2xx responses throw `DidisError` with the RFC 9457 problem body (including the resolution `trace` where available).
 
+**Rate limits.** When the public budget is used up the API answers `429` with `Retry-After`. The client waits that long and retries (up to 2 times, at most 10 s per wait), so a loop of calls slows down instead of failing. Tune with `new DidisClient({ retry: { maxRetries: 3, maxWaitMs: 5000 } })` or turn it off with `retry: false`.
+
 ## Guard agent tools
 
 Wrap a tool handler so it runs only when (1) the tool definition the agent received still matches the one you approved and (2) DID.is says the agent's registered delegation grants the tool. Every failure throws `DidisGuardError` and the handler does not run (fail-closed).

@@ -15,7 +15,7 @@
     "openai-agents": "node openai-agents-tool.mjs"
   },
   "dependencies": {
-    "@didis/client": "^0.2.4"
+    "@didis/client": "^0.2.5"
   },
   "optionalDependencies": {
     "@langchain/core": "^1.2.17",

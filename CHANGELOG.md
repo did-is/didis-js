@@ -4,6 +4,13 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-19
+
+### Added
+
+- Optional project API key: `new DidisClient({ apiKey })`. With a key, MCP inspection, A2A inspection, tool-call authorization and delegation-chain checks use the paid `/v1/customer/*` routes and count against your team's monthly allowance instead of the anonymous per-IP limit. Results are identical to the public routes. Each call sends one fresh `Idempotency-Key`; automatic `429`/`503` retries reuse it, so a request is never billed twice. The key is never sent to public routes, and `register: true` delegation checks always use the public route. Without a key nothing changes.
+- `usage()` returns this month's team allowance (`CustomerUsage`: used, reserved, limit and remaining per pool). Requires the API key.
+
 ## [0.2.4] - 2026-10-19
 
 ### Added
@@ -62,7 +69,8 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/did-is/didis-js/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/did-is/didis-js/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/did-is/didis-js/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/did-is/didis-js/compare/v0.2.1...v0.2.2

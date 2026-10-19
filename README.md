@@ -65,6 +65,8 @@ Identifiers are percent-encoded exactly once by the client. Non-2xx responses th
 
 **Rate limits.** When the public budget is used up the API answers `429` with `Retry-After`. The client waits that long and retries (up to 2 times, at most 10 s per wait), so a loop of calls slows down instead of failing. Tune with `new DidisClient({ retry: { maxRetries: 3, maxWaitMs: 5000 } })` or turn it off with `retry: false`.
 
+**Project API key (optional).** Every check works without a key. A team that needs more than the anonymous per-IP limit can create a key in the DID.is console (Free plan included) and pass it: `new DidisClient({ apiKey: process.env.DIDIS_API_KEY })`. Then `inspectMcp`, `inspectA2a`, `authorize` and `verifyDelegation` use the `/v1/customer/*` routes and count against the team's monthly allowance; results are identical. Each call sends one fresh `Idempotency-Key` (retries reuse it, so nothing is billed twice). `await didis.usage()` shows the allowance left. Keep the key server-side; it is never sent to public routes.
+
 ## Guard agent tools
 
 Wrap a tool handler so it runs only when (1) the tool definition the agent received still matches the one you approved and (2) DID.is says the agent's registered delegation grants the tool. Every failure throws `DidisGuardError` and the handler does not run (fail-closed).
@@ -148,6 +150,7 @@ const ok = await verifyWebhookSignature(
 | `inspectMcp(endpoint)` / `inspectA2a(url)` | `GET /v1/mcp/inspect`, `/v1/a2a/inspect` |
 | `verifyDelegation(chain, opts)` / `authorize(chain, tool, opts)` / `verifyTool(agent, tool, root?)` | `/v1/agents/*` |
 | `fastVerifyDid(did)` / `fastVerifyJws(jws, relationship?)` | `/v1/fast-verify/*` |
+| `usage()` (with `apiKey`) | `GET /v1/customer/usage` |
 | `watch` / `watches` / `unwatch` / `events` | `/v1/monitoring/*` (admin) |
 
 Public API reference: <https://did.is/developers>. Monitoring routes (`watch`, `watches`, `unwatch`, `events`) need an admin token and are only available on self-hosted deployments; they are not exposed by the public API.

@@ -97,3 +97,47 @@ test("retryAfterMs reads delta-seconds and HTTP-dates", async () => {
   assert.equal(retryAfterMs("soon"), null);
   assert.equal(retryAfterMs(undefined), null);
 });
+
+test("apiKey routes agent checks to the paid API with one idempotency key per call", async () => {
+  const { calls, fetchImpl } = mock([]);
+  const c = new DidisClient({ baseUrl: "http://x", fetch: fetchImpl, apiKey: "didis_test" });
+  await c.inspectMcp("https://mcp.example.com/mcp");
+  await c.inspectA2a("https://agent.example.com");
+  await c.authorize(["r1"], "payments:transfer", { trustedRoots: ["did:web:a"] });
+  await c.verifyDelegation(["r1"]);
+  await c.usage();
+  assert.deepEqual(calls.map((x) => `${x.init.method} ${x.url}`), [
+    "POST http://x/v1/customer/mcp/inspect",
+    "POST http://x/v1/customer/a2a/inspect",
+    "POST http://x/v1/customer/agents/authorize",
+    "POST http://x/v1/customer/agents/verify-delegation",
+    "GET http://x/v1/customer/usage",
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { endpoint: "https://mcp.example.com/mcp" });
+  assert.deepEqual(JSON.parse(calls[2].init.body), { chain: ["r1"], tool: "payments:transfer", trustedRoots: ["did:web:a"] });
+  assert.deepEqual(JSON.parse(calls[3].init.body), { chain: ["r1"] });
+  for (const x of calls) assert.equal(x.init.headers.authorization, "Bearer didis_test");
+  const keys = calls.slice(0, 4).map((x) => x.init.headers["idempotency-key"]);
+  assert.ok(keys.every((k) => /^[0-9a-f-]{36}$/.test(k)));
+  assert.equal(new Set(keys).size, 4);
+  assert.equal(calls[4].init.headers["idempotency-key"], undefined);
+});
+
+test("apiKey retry reuses the same idempotency key", async () => {
+  const { calls, fetchImpl } = mock([{ status: 503, body: { title: "busy" }, headers: { "content-type": "application/problem+json", "retry-after": "0" } }, { status: 200, body: {} }]);
+  await new DidisClient({ baseUrl: "http://x", fetch: fetchImpl, apiKey: "k" }).inspectMcp("https://m.example/mcp");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].init.headers["idempotency-key"], calls[1].init.headers["idempotency-key"]);
+});
+
+test("without apiKey nothing changes and no key is ever sent; register stays public", async () => {
+  const { calls, fetchImpl } = mock([]);
+  await new DidisClient({ baseUrl: "http://x", fetch: fetchImpl }).inspectMcp("https://m.example/mcp");
+  const keyed = mock([]);
+  await new DidisClient({ baseUrl: "http://x", fetch: keyed.fetchImpl, apiKey: "k" }).verifyDelegation(["r1"], { register: true });
+  assert.equal(calls[0].url, "http://x/v1/mcp/inspect?endpoint=https%3A%2F%2Fm.example%2Fmcp");
+  assert.equal(calls[0].init.headers.authorization, undefined);
+  assert.equal(keyed.calls[0].url, "http://x/v1/agents/verify-delegation");
+  assert.equal(keyed.calls[0].init.headers.authorization, undefined);
+  await assert.rejects(new DidisClient({ baseUrl: "http://x", fetch: fetchImpl }).usage(), /apiKey is required/);
+});

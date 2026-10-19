@@ -14,3 +14,12 @@ export function subtle(): Promise<SubtleCrypto> {
   }
   return cached;
 }
+
+/** Random UUID v4 for idempotency keys; Node 18 has no global `crypto`. */
+export async function randomId(): Promise<string> {
+  const g = (globalThis as { crypto?: Crypto }).crypto;
+  if (g?.randomUUID) return g.randomUUID();
+  const m = (await import("node:crypto" as string)) as { randomUUID?: () => string };
+  if (!m.randomUUID) throw new Error("crypto.randomUUID is not available in this runtime");
+  return m.randomUUID();
+}

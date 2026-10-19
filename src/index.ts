@@ -1,4 +1,4 @@
-import { subtle } from "./webcrypto.js";
+import { randomId, subtle } from "./webcrypto.js";
 /**
  * DID.is client SDK (TypeScript — Node 18+, Deno, Bun, browsers, edge runtimes).
  *
@@ -373,6 +373,19 @@ export interface ToolEvidence {
   inputSchema: unknown;
 }
 
+/** `GET /v1/customer/usage`: this month's team allowance (all of the team's projects share it). */
+export interface CustomerUsage {
+  period: string;
+  standardUsed: number;
+  standardReserved: number;
+  standardLimit: number;
+  standardRemaining: number;
+  expensiveUsed: number;
+  expensiveReserved: number;
+  expensiveLimit: number;
+  expensiveRemaining: number;
+}
+
 export interface McpInspection {
   endpoint: string;
   status: "INSPECTED" | "AUTH_REQUIRED" | string;
@@ -646,6 +659,13 @@ export interface DidisClientOptions {
   baseUrl?: string;
   /** Bearer token for admin-only monitoring routes. Never ship it to browsers. */
   adminToken?: string;
+  /**
+   * Project API key from the DID.is console (optional). With a key, `inspectMcp`, `inspectA2a`,
+   * `authorize` and `verifyDelegation` use the paid routes and count against your team's monthly
+   * allowance instead of the anonymous per-IP limit. Results are identical. The key is sent only
+   * to `/v1/customer/*` routes, never to public routes. Keep it server-side.
+   */
+  apiKey?: string;
   timeoutMs?: number;
   fetch?: typeof fetch;
   /**
@@ -672,7 +692,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
 /** Package version, kept equal to package.json (checked by the test suite). */
-export const VERSION = "0.2.4";
+export const VERSION = "0.2.5";
 
 /**
  * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.
@@ -687,6 +707,7 @@ const enc = (s: string) => encodeURIComponent(s.trim());
 export class DidisClient {
   private readonly baseUrl: string;
   private readonly adminToken?: string;
+  private readonly apiKey?: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
@@ -696,6 +717,7 @@ export class DidisClient {
     const o: DidisClientOptions = typeof options === "string" ? { baseUrl: options } : options;
     this.baseUrl = (o.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     this.adminToken = o.adminToken;
+    this.apiKey = o.apiKey || undefined;
     this.timeoutMs = o.timeoutMs ?? 30_000;
     this.fetchImpl = o.fetch ?? fetch;
     this.maxRetries = o.retry === false ? 0 : Math.max(0, Math.floor(o.retry?.maxRetries ?? 2));
@@ -752,6 +774,21 @@ export class DidisClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Paid route call: the project API key plus one fresh Idempotency-Key. Automatic retries of a
+   * 429/503 reuse the same key, so a request is never billed twice.
+   */
+  private async paid<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const headers = { authorization: `Bearer ${this.apiKey}`, ...(method === "POST" ? { "idempotency-key": await randomId() } : {}) };
+    return this.request<T>(method, `/v1/customer/${path}`, body, headers);
+  }
+
+  /** Team allowance for this month (requires `apiKey`). Same numbers as the RateLimit headers. */
+  usage(): Promise<CustomerUsage> {
+    if (!this.apiKey) return Promise.reject(new Error("apiKey is required for usage()"));
+    return this.paid("GET", "usage");
   }
 
   private admin(): Record<string, string> {
@@ -844,18 +881,28 @@ export class DidisClient {
   }
 
   inspectMcp(endpoint: string): Promise<McpInspection> {
+    if (this.apiKey) return this.paid("POST", "mcp/inspect", { endpoint });
     return this.request("GET", `/v1/mcp/inspect?endpoint=${encodeURIComponent(endpoint)}`);
   }
 
   inspectA2a(url: string): Promise<A2aInspection> {
+    if (this.apiKey) return this.paid("POST", "a2a/inspect", { url });
     return this.request("GET", `/v1/a2a/inspect?url=${encodeURIComponent(url)}`);
   }
 
+  /**
+   * `register: true` stores the chain for `verifyTool`; it always uses the public route (the paid
+   * route never writes shared state), so the API key is not sent for it.
+   */
   verifyDelegation(chain: string[], opts: { trustedRoots?: string[]; register?: boolean } = {}): Promise<DelegationVerification> {
+    if (this.apiKey && !opts.register) {
+      return this.paid("POST", "agents/verify-delegation", { chain, ...(opts.trustedRoots ? { trustedRoots: opts.trustedRoots } : {}) });
+    }
     return this.request("POST", "/v1/agents/verify-delegation", { chain, ...opts });
   }
 
   authorize(chain: string[], tool: string, opts: { trustedRoots?: string[] } = {}): Promise<AuthorizationResponse> {
+    if (this.apiKey) return this.paid("POST", "agents/authorize", { chain, tool, ...(opts.trustedRoots ? { trustedRoots: opts.trustedRoots } : {}) });
     return this.request("POST", "/v1/agents/authorize", { chain, tool, ...opts });
   }
 

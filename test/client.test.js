@@ -141,3 +141,11 @@ test("without apiKey nothing changes and no key is ever sent; register stays pub
   assert.equal(keyed.calls[0].init.headers.authorization, undefined);
   await assert.rejects(new DidisClient({ baseUrl: "http://x", fetch: fetchImpl }).usage(), /apiKey is required/);
 });
+
+test('exact observation selection is additive to legacy hash diff', async () => {
+ const {calls,fetchImpl}=mock([]); const c=new DidisClient({baseUrl:'http://x',fetch:fetchImpl});
+ await c.diffObservations('did:key:test','obs:11','obs:12');
+ assert.equal(calls[0].url,'http://x/v1/diff/did%3Akey%3Atest?fromObservation=obs%3A11&toObservation=obs%3A12');
+ await c.diff('did:key:test','hash-a','hash-b');
+ assert.match(calls[1].url,/\?from=hash-a&to=hash-b$/);
+});

@@ -386,6 +386,16 @@ export interface CustomerUsage {
   expensiveRemaining: number;
 }
 
+/** Bounded tools/list evidence only; prompts and resources are not inspected. */
+export interface InventoryEvidence {
+  scope: string;
+  pagesFetched: number;
+  entriesSeen: number;
+  entriesDropped: number;
+  hasMore: boolean;
+  reasons: string[];
+}
+
 export interface McpInspection {
   endpoint: string;
   status: "INSPECTED" | "AUTH_REQUIRED" | string;
@@ -397,6 +407,9 @@ export interface McpInspection {
   instructions?: string;
   tools: ToolEvidence[];
   inventoryHash: string;
+  /** Missing means unknown, not complete. Hash covers observed tools only. */
+  inventoryComplete?: boolean;
+  inventoryEvidence?: InventoryEvidence;
   jcsProfile?: string;
   classCounts: Record<string, number>;
   drift: { status: string; previousObservedAt?: string; previousInventoryHash?: string; added: string[]; removed: string[]; changed: string[] };
@@ -437,11 +450,11 @@ export interface DelegationLink {
   issuer: string;
   audience: string;
   capabilities: string[];
-  notBefore?: string;
-  expires?: string;
-  jti?: string;
-  kid?: string;
-  alg?: string;
+  notBefore: string | null;
+  expires: string | null;
+  jti: string | null;
+  kid: string | null;
+  alg: string | null;
   digest: string;
   signatureValid: boolean;
   status: string;
@@ -453,11 +466,11 @@ export interface DelegationChainResult {
   status: string;
   headline: string;
   format: string;
-  root?: string;
-  leaf?: string;
+  root: string | null;
+  leaf: string | null;
   effectiveCapabilities: string[];
-  notAfter?: string;
-  trustedRoot?: boolean;
+  notAfter: string | null;
+  trustedRoot: boolean | null;
   links: DelegationLink[];
   checks: Check[];
   limitations: string[];
@@ -508,6 +521,8 @@ export interface ObservationRecord {
 
 export interface SemanticDiff {
   did: string;
+  fromObservation?: string;
+  toObservation?: string;
   fromHash: string;
   toHash: string;
   fromObservedAt: string;
@@ -602,9 +617,9 @@ export interface FastVerifyDidResult {
   headline: string;
   statements: string[];
   dimensions: { id: string; state: DimensionState }[];
-  keys: { id: string; curve?: string; status: KeyEvidence["status"]; relationships: string[]; jwkThumbprint?: string }[];
+  keys: { id: string; curve: string | null; status: KeyEvidence["status"]; relationships: string[]; jwkThumbprint: string | null }[];
   domainBinding: string | null;
-  documentSha256?: string;
+  documentSha256: string | null;
   observedAt: string;
   cached: boolean;
 }
@@ -613,9 +628,9 @@ export interface FastVerifyJwsResult {
   status: "VALID" | "INVALID" | "INDETERMINATE" | "UNSUPPORTED" | "MALFORMED";
   valid: boolean;
   headline: string;
-  alg?: string;
-  kid?: string;
-  typ?: string;
+  alg?: string | null;
+  kid?: string | null;
+  typ?: string | null;
   /** Decoded JSON payload, or base64url text when the payload is not JSON. */
   payload?: unknown;
   signingInputSha256?: string;
@@ -692,7 +707,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
 /** Package version, kept equal to package.json (checked by the test suite). */
-export const VERSION = "0.2.5";
+export const VERSION = "0.2.6";
 
 /**
  * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.
@@ -859,6 +874,11 @@ export class DidisClient {
   diff(did: string, from?: string, to?: string): Promise<SemanticDiff> {
     const q = from && to ? `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` : "";
     return this.request("GET", `/v1/diff/${enc(did)}${q}`);
+  }
+
+  /** Exact public history rows, including domain-only changes with identical document hashes. */
+  diffObservations(did: string, fromObservation: string, toObservation: string): Promise<SemanticDiff> {
+    return this.request("GET", `/v1/diff/${enc(did)}?fromObservation=${encodeURIComponent(fromObservation)}&toObservation=${encodeURIComponent(toObservation)}`);
   }
 
   graph(did: string): Promise<GraphResponse> {

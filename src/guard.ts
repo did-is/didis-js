@@ -7,7 +7,14 @@
  *     `definitionSha256`). Catches MCP "rug-pull" drift, including servers DID.is cannot reach.
  *  2. Delegation (DID.is `verify-tool`): the configured agent DID holds a registered, VALID
  *     delegation whose leaf capabilities grant the tool's capability. ALLOW is cached briefly;
- *     DENY and errors are never cached.
+ *     DENY and errors are never cached. A parseable `expires` is an exclusive deadline:
+ *     stale ALLOW is refused with TOOL_NOT_AUTHORIZED, even with caching disabled.
+ *     Absent/unparseable expiry keeps the legacy optional-field behavior (TTL-only cache).
+ *
+ * Pins are re-read after authorization awaits, and the per-call deadline is checked again
+ * immediately before invoking a wrapped handler. Pinned providers may run twice per check.
+ * This is a pre-execution check, not ongoing
+ * stream authorization or an atomic transaction with a remote tool's side effects.
  *
  * Tool name vs capability: MCP tool names may only use `A-Z a-z 0-9 _ - .` (SEP-986), while
  * DID.is capabilities are namespaced with `:` (e.g. `weather:forecast`). Pass both when they
@@ -107,8 +114,8 @@ export interface DidisGuardOptions {
   client: DidisClient;
   /** The agent DID from your runtime configuration. Never take it from model output. */
   agent: string;
-  /** Require the delegation chain to start at this root DID. Strongly recommended. */
-  root?: string;
+  /** Application-owned trusted root DID. Required; never derive it from a chain or model output. */
+  root: string;
   /** Approved `{ toolName: definitionSha256 }`. A pinned tool must be given its definition. */
   pins?: Record<string, string>;
   /** Refuse tools that have no pin. Default `false`. */
@@ -127,7 +134,7 @@ export interface GuardCallOptions {
    * Must be an exact capability (no `*`): wildcards belong in delegations, not in tool calls.
    */
   capability?: string;
-  /** The definition the agent received, or a function returning the current one. */
+  /** The definition the agent received, or a function returning the current one (may be read twice). */
   definition?: Definition;
 }
 
@@ -149,7 +156,7 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
   const allowCacheMs = options.allowCacheMs ?? 30_000;
   if (!client || typeof client.verifyTool !== "function") throw new DidisGuardError("GUARD_MISCONFIGURED", "", "a DidisClient is required");
   if (typeof agent !== "string" || !DID.test(agent)) throw new DidisGuardError("GUARD_MISCONFIGURED", "", "agent must be a DID");
-  if (root !== undefined && (typeof root !== "string" || !DID.test(root))) throw new DidisGuardError("GUARD_MISCONFIGURED", "", "root must be a DID");
+  if (typeof root !== "string" || root !== root.trim() || !DID.test(root)) throw new DidisGuardError("GUARD_MISCONFIGURED", "", "an application-owned trusted root DID is required");
   if (!Number.isFinite(allowCacheMs) || allowCacheMs < 0) throw new DidisGuardError("GUARD_MISCONFIGURED", "", "allowCacheMs must be >= 0");
   for (const [name, pin] of Object.entries(pins)) {
     if (!/^[0-9a-f]{64}$/.test(pin)) throw new DidisGuardError("GUARD_MISCONFIGURED", name, "pins must be lowercase hex SHA-256");
@@ -169,7 +176,7 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
     throw new DidisGuardError(code, tool, reason, { ...detail, capability });
   };
 
-  async function checkDefinition(tool: string, capability: string, definition: Definition | undefined): Promise<void> {
+  async function checkDefinition(tool: string, capability: string, definition: Definition | undefined): Promise<string | undefined> {
     const pin = pinFor(tool);
     if (pin === undefined) {
       if (requirePins) fail("TOOL_DEFINITION_MISSING", tool, capability, `no pinned definition for '${tool}'`);
@@ -190,14 +197,22 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
     }
     if ((def as { name?: unknown }).name !== tool) fail("TOOL_DRIFT", tool, capability, `definition name does not match '${tool}'`, { expected: pin, actual });
     if (actual !== pin) fail("TOOL_DRIFT", tool, capability, `definition of '${tool}' changed since it was approved`, { expected: pin, actual });
+    assertPinCurrent(tool, capability, pin);
+    return pin;
   }
 
-  async function checkDelegation(tool: string, capability: string): Promise<void> {
+  function assertPinCurrent(tool: string, capability: string, checkedPin: string | undefined): void {
+    if (pinFor(tool) !== checkedPin) {
+      fail("TOOL_DRIFT", tool, capability, `approved pin for '${tool}' changed before execution`);
+    }
+  }
+
+  async function checkDelegation(tool: string, capability: string): Promise<number> {
     const now = Date.now();
     const until = allowed.get(capability);
     if (until !== undefined && until > now) {
       report(tool, capability, true, "cached ALLOW", true);
-      return;
+      return until;
     }
     allowed.delete(capability);
     let auth: ToolAuthorization;
@@ -214,31 +229,54 @@ export function createDidisGuard(options: DidisGuardOptions): DidisGuard {
       }
       fail("GUARD_UNAVAILABLE", tool, capability, "DID.is returned an unexpected authorization answer");
     }
-    if (root !== undefined && auth.root !== root) fail("TOOL_NOT_AUTHORIZED", tool, capability, "delegation root does not match the configured root");
+    if (auth.root !== root) fail("TOOL_NOT_AUTHORIZED", tool, capability, "delegation root does not match the configured root");
+    // Expiry is optional in the existing wire contract. Never turn malformed/missing expiry
+    // into a new mandatory field; when parseable, enforce it on first use as well as reuse.
+    const parsed = typeof auth.expires === "string" ? Date.parse(auth.expires) : NaN;
+    const deadline = Number.isFinite(parsed) ? parsed : Infinity;
+    assertFresh(tool, capability, deadline);
     if (allowCacheMs > 0) {
-      const expires = auth.expires ? Date.parse(auth.expires) : NaN;
-      const until2 = Math.min(now + allowCacheMs, Number.isFinite(expires) ? expires : now + allowCacheMs);
-      if (until2 > now) allowed.set(capability, until2);
+      const until2 = Math.min(now + allowCacheMs, deadline);
+      if (until2 > Date.now()) allowed.set(capability, until2);
     }
     report(tool, capability, true, auth.reason, false);
+    return deadline;
   }
 
-  async function check({ tool, capability, definition }: GuardCallOptions): Promise<void> {
+  function assertFresh(tool: string, capability: string, deadline: number): void {
+    if (deadline <= Date.now()) {
+      fail("TOOL_NOT_AUTHORIZED", tool, capability, "authorization expired before execution");
+    }
+  }
+
+  async function prepare({ tool, capability, definition }: GuardCallOptions): Promise<{ tool: string; capability: string; deadline: number; pin: string | undefined }> {
     if (typeof tool !== "string" || !tool.trim() || tool !== tool.trim()) fail("GUARD_MISCONFIGURED", String(tool), String(capability ?? tool), "tool must be a non-empty, trimmed name");
     const cap = capability === undefined ? tool : capability;
     if (typeof cap !== "string" || !CAPABILITY.test(cap)) {
       fail("GUARD_MISCONFIGURED", tool, String(cap), "capability must be exact: ':'-separated non-empty segments, no spaces, no '*'");
     }
     await checkDefinition(tool, cap, definition);
-    await checkDelegation(tool, cap);
+    // Keep this call's deadline, not a later cache entry written by a concurrent call.
+    const deadline = await checkDelegation(tool, cap);
+    const pin = await checkDefinition(tool, cap, definition);
+    assertFresh(tool, cap, deadline);
+    assertPinCurrent(tool, cap, pin);
+    return { tool, capability: cap, deadline, pin };
   }
 
   return {
-    check,
+    async check(call) {
+      const ticket = await prepare(call);
+      assertFresh(ticket.tool, ticket.capability, ticket.deadline);
+      assertPinCurrent(ticket.tool, ticket.capability, ticket.pin);
+    },
     wrap<A extends unknown[], R>(call: GuardCallOptions, handler: (...args: A) => R | Promise<R>) {
       if (typeof handler !== "function") throw new DidisGuardError("GUARD_MISCONFIGURED", call?.tool ?? "", "handler must be a function");
       return async (...args: A): Promise<Awaited<R>> => {
-        await check(call);
+        const ticket = await prepare(call);
+        // No await between the final deadline/pin checks and calling the handler.
+        assertFresh(ticket.tool, ticket.capability, ticket.deadline);
+        assertPinCurrent(ticket.tool, ticket.capability, ticket.pin);
         return await handler(...args);
       };
     },
@@ -262,6 +300,10 @@ export function withDidisGuard<A extends unknown[], R>(
 }
 
 export interface McpAttestation {
+  /** Requested pins only, never an all-tools or safety assertion. */
+  inventoryComplete?: boolean;
+  inventoryEvidence?: McpInspection["inventoryEvidence"];
+  scope: "requested-pins";
   ok: boolean;
   inventoryHash: string;
   /** Pinned tools whose DID.is-observed hash differs, or that DID.is did not see. */
@@ -274,11 +316,17 @@ export interface McpAttestation {
 /**
  * Optional startup check: asks DID.is to inspect a public MCP endpoint and compares the observed
  * `definitionSha256` values with your pins. Use at deploy/startup, never per tool call.
+ * Matching requested pins can succeed on partial inventory; extras and tool safety are not accepted.
  * `AUTH_REQUIRED` or any non-INSPECTED status returns `ok: false`.
  */
 export async function attestMcpPins(client: DidisClient, endpoint: string, pins: Record<string, string>): Promise<McpAttestation> {
   const inspection = await client.inspectMcp(endpoint);
-  const seen = new Map(inspection.tools.map((t) => [t.name, t.definitionSha256]));
+  const seen = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const t of inspection.tools) {
+    if (seen.has(t.name) || ambiguous.has(t.name)) { seen.delete(t.name); ambiguous.add(t.name); }
+    else seen.set(t.name, t.definitionSha256);
+  }
   const mismatched = Object.entries(pins)
     .filter(([tool, expected]) => seen.get(tool) !== expected)
     .map(([tool, expected]) => ({ tool, expected, observed: seen.get(tool) }));
@@ -286,6 +334,9 @@ export async function attestMcpPins(client: DidisClient, endpoint: string, pins:
   return {
     ok: inspection.status === "INSPECTED" && mismatched.length === 0,
     inventoryHash: inspection.inventoryHash,
+    inventoryComplete: inspection.inventoryComplete,
+    inventoryEvidence: inspection.inventoryEvidence,
+    scope: "requested-pins",
     mismatched,
     unpinned,
     status: inspection.status,

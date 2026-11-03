@@ -26,8 +26,8 @@ function fakeClient(answers) {
   } });
   return { client, calls };
 }
-const allow = (tool, extra = {}) => ({ body: { agent: AGENT, tool, decision: "ALLOW", authorized: true, reason: `capability '${tool}' grants '${tool}'`, root: ROOT, ...extra } });
-const deny = (tool) => ({ body: { agent: AGENT, tool, decision: "DENY", authorized: false, reason: `scope violation: no delegated capability grants '${tool}'` } });
+const allow = (tool, extra = {}) => ({ body: { agent: AGENT, root: ROOT, tool, decision: "ALLOW", authorized: true, reason: `capability '${tool}' grants '${tool}'`, root: ROOT, ...extra } });
+const deny = (tool) => ({ body: { agent: AGENT, root: ROOT, tool, decision: "DENY", authorized: false, reason: `scope violation: no delegated capability grants '${tool}'` } });
 
 async function rejectsWith(p, code) {
   await assert.rejects(p, (e) => e instanceof DidisGuardError && e.code === code);
@@ -66,7 +66,7 @@ test("drift blocks before any network call and before the handler", async () => 
 
 test("requirePins refuses unpinned tools", async () => {
   const { client } = fakeClient([allow("x")]);
-  await rejectsWith(createDidisGuard({ client, agent: AGENT, requirePins: true }).check({ tool: "x" }), "TOOL_DEFINITION_MISSING");
+  await rejectsWith(createDidisGuard({ client, agent: AGENT, root: ROOT, requirePins: true }).check({ tool: "x" }), "TOOL_DEFINITION_MISSING");
 });
 
 test("DENY, errors, 429 and odd answers all fail closed and are not cached", async () => {
@@ -74,7 +74,7 @@ test("DENY, errors, 429 and odd answers all fail closed and are not cached", asy
     deny("payments:refund"),
     { status: 429, body: { title: "Too Many Requests", detail: "slow down" } },
     new TypeError("network down"),
-    { body: { agent: AGENT, tool: "other", decision: "ALLOW", authorized: true, reason: "x" } },
+    { body: { agent: AGENT, root: ROOT, tool: "other", decision: "ALLOW", authorized: true, reason: "x" } },
     { body: { agent: "did:web:someone.else", tool: "payments:refund", decision: "ALLOW", authorized: true, reason: "x" } },
     allow("payments:refund", { root: "did:web:attacker.example" }),
     allow("payments:refund"),
@@ -106,8 +106,8 @@ test("ALLOW is cached briefly, bounded by expiry, and clearable", async () => {
   const past = new Date(Date.now() - 1000).toISOString();
   const expired = fakeClient(() => allow("t", { expires: past }));
   const g2 = createDidisGuard({ client: expired.client, agent: AGENT, root: ROOT });
-  await g2.check({ tool: "t" });
-  await g2.check({ tool: "t" });
+  await rejectsWith(g2.check({ tool: "t" }), "TOOL_NOT_AUTHORIZED");
+  await rejectsWith(g2.check({ tool: "t" }), "TOOL_NOT_AUTHORIZED");
   assert.equal(expired.calls.length, 2);
 
   const none = fakeClient(() => allow("t"));
@@ -121,9 +121,9 @@ test("misconfiguration is rejected up front", async () => {
   const { client } = fakeClient([]);
   assert.throws(() => createDidisGuard({ client, agent: "agent-1" }), (e) => e.code === "GUARD_MISCONFIGURED");
   assert.throws(() => createDidisGuard({ client, agent: AGENT, root: "root" }), (e) => e.code === "GUARD_MISCONFIGURED");
-  assert.throws(() => createDidisGuard({ client, agent: AGENT, pins: { t: "ABC" } }), (e) => e.code === "GUARD_MISCONFIGURED");
-  assert.throws(() => createDidisGuard({ client, agent: AGENT, allowCacheMs: -1 }), (e) => e.code === "GUARD_MISCONFIGURED");
-  await rejectsWith(createDidisGuard({ client, agent: AGENT }).check({ tool: " t" }), "GUARD_MISCONFIGURED");
+  assert.throws(() => createDidisGuard({ client, agent: AGENT, root: ROOT, pins: { t: "ABC" } }), (e) => e.code === "GUARD_MISCONFIGURED");
+  assert.throws(() => createDidisGuard({ client, agent: AGENT, root: ROOT, allowCacheMs: -1 }), (e) => e.code === "GUARD_MISCONFIGURED");
+  await rejectsWith(createDidisGuard({ client, agent: AGENT, root: ROOT }).check({ tool: " t" }), "GUARD_MISCONFIGURED");
   await assert.rejects(pinToolDefinitions([{ name: "a" }, { name: "a" }]), TypeError);
 });
 
@@ -160,27 +160,40 @@ test("MCP-safe tool names map to namespaced capabilities", async () => {
   assert.equal(calls.length, 1);
   // an ALLOW for a different capability is not accepted
   const other = fakeClient(() => allow("weather:forecast"));
-  await rejectsWith(createDidisGuard({ client: other.client, agent: AGENT }).check({ tool: "weather_forecast", capability: "weather:alerts" }), "GUARD_UNAVAILABLE");
+  await rejectsWith(createDidisGuard({ client: other.client, agent: AGENT, root: ROOT }).check({ tool: "weather_forecast", capability: "weather:alerts" }), "GUARD_UNAVAILABLE");
   // without capability, the tool name is the capability (0.2.0 behaviour)
   const legacy = fakeClient((url) => allow(new URL(url).searchParams.get("tool")));
-  await createDidisGuard({ client: legacy.client, agent: AGENT }).check({ tool: "weather:forecast" });
+  await createDidisGuard({ client: legacy.client, agent: AGENT, root: ROOT }).check({ tool: "weather:forecast" });
   assert.equal(new URL(legacy.calls[0]).searchParams.get("tool"), "weather:forecast");
   // one-line form forwards the capability too
   const one = fakeClient((url) => allow(new URL(url).searchParams.get("tool")));
-  const run = withDidisGuard(async () => "ok", { client: one.client, agent: AGENT, tool: "weather_forecast", capability: "weather:forecast", pin: pins.weather_forecast, definition: def });
+  const run = withDidisGuard(async () => "ok", { client: one.client, agent: AGENT, root: ROOT, tool: "weather_forecast", capability: "weather:forecast", pin: pins.weather_forecast, definition: def });
   assert.equal(await run(), "ok");
   assert.equal(new URL(one.calls[0]).searchParams.get("tool"), "weather:forecast");
 });
 
 test("capabilities must be exact and well-formed", async () => {
   const { client, calls } = fakeClient(() => allow("x"));
-  const guard = createDidisGuard({ client, agent: AGENT });
+  const guard = createDidisGuard({ client, agent: AGENT, root: ROOT });
   for (const capability of ["*", "weather:*", "a::b", ":a", "a:", "two words", "", " weather:forecast"]) {
     await assert.rejects(guard.check({ tool: "t", capability }), (e) => e instanceof DidisGuardError && e.code === "GUARD_MISCONFIGURED" && e.detail.capability === capability, capability);
   }
   assert.equal(calls.length, 0);
   // DENY detail carries both names
   const d = fakeClient([deny("payments:refund")]);
-  await assert.rejects(createDidisGuard({ client: d.client, agent: AGENT }).check({ tool: "payments_refund", capability: "payments:refund" }),
+  await assert.rejects(createDidisGuard({ client: d.client, agent: AGENT, root: ROOT }).check({ tool: "payments_refund", capability: "payments:refund" }),
     (e) => e.code === "TOOL_NOT_AUTHORIZED" && e.tool === "payments_refund" && e.detail.capability === "payments:refund");
+});
+
+test('MCP pin attestation is requested-pin scoped on partial and rejects duplicate ambiguity', async () => {
+  for (const completeness of [true, false, undefined]) {
+    const {client} = fakeClient([{body:{status:'INSPECTED',inventoryHash:'subset',inventoryComplete:completeness,tools:[{name:'reviewed',definitionSha256:'pin'},{name:'extra',definitionSha256:'other'}]}}]);
+    const result = await attestMcpPins(client,'https://example.invalid/mcp',{reviewed:'pin'});
+    assert.equal(result.ok,true);
+    assert.equal(result.scope,'requested-pins');
+    assert.equal(result.inventoryComplete,completeness);
+    assert.deepEqual(result.unpinned,['extra']);
+  }
+  const {client} = fakeClient([{body:{status:'INSPECTED',inventoryHash:'subset',inventoryComplete:false,tools:[{name:'reviewed',definitionSha256:'pin'},{name:'reviewed',definitionSha256:'pin'}]}}]);
+  assert.equal((await attestMcpPins(client,'https://example.invalid/mcp',{reviewed:'pin'})).ok,false);
 });

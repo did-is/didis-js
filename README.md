@@ -2,6 +2,9 @@
 
 Official TypeScript/JavaScript SDK for the [DID.is](https://did.is) public API: DID resolution with evidence, W3C DID Resolution, verifiable credentials, explicit policies, and MCP/A2A agent trust. Works anywhere `fetch` exists: Node 18+, Deno, Bun, browsers and edge runtimes. Zero dependencies, fully typed, ESM.
 
+
+Current release: **0.2.7**. See [CHANGELOG.md](CHANGELOG.md) for root-required guard migration and corrected first-party license attribution.
+
 ## Install
 
 ```bash
@@ -79,7 +82,7 @@ Identifiers are percent-encoded exactly once by the client. Non-2xx responses th
 
 ## Guard agent tools
 
-**0.2.6 migration (breaking):** every execution guard, including standalone `check` calls and one-line wrappers, requires a nonempty, trimmed trusted root DID from application-owned configuration. Missing/null/empty/whitespace roots fail with `GUARD_MISCONFIGURED` at construction, before any network call or handler. TypeScript requires `root` statically; Python retains its Optional annotation but validates it at runtime. Do not obtain the trusted root from model output, a submitted delegation, or an ALLOW response. The configured root is sent to verification and compared with the returned root. Definition pins do not establish issuer authority. Rootless chain/tool verification remains advisory: signature-valid alone is not application authorization. 0.2.5 accepts rootless guards; 0.2.6 rejects them, so this is not a backward-compatible patch.
+**0.2.7 migration from 0.2.5 (breaking; introduced in the 0.2.6 source release):** every execution guard, including standalone `check` calls and one-line wrappers, requires a nonempty, trimmed trusted root DID from application-owned configuration. Missing/null/empty/whitespace roots fail with `GUARD_MISCONFIGURED` at construction, before any network call or handler. TypeScript requires `root` statically; Python retains its Optional annotation but validates it at runtime. Do not obtain the trusted root from model output, a submitted delegation, or an ALLOW response. The configured root is sent to verification and compared with the returned root. Definition pins do not establish issuer authority. Rootless chain/tool verification remains advisory: signature-valid alone is not application authorization. 0.2.5 accepts rootless guards; 0.2.7 rejects them, so this is not a backward-compatible patch.
 
 Wrap a tool handler so it runs only when (1) the tool definition the agent received still matches the one you approved and (2) DID.is says the agent's registered delegation grants the tool. Every failure throws `DidisGuardError` and the handler does not run (fail-closed).
 
@@ -93,7 +96,7 @@ const pins = await pinToolDefinitions(reviewedTools);
 const guard = createDidisGuard({
   client: didis,
   agent: process.env.AGENT_DID!, // from configuration, never from model output
-  root: process.env.ROOT_DID!,   // trusted application configuration; required in 0.2.6
+  root: process.env.ROOT_DID!,   // trusted application configuration; required in 0.2.7
   pins,
   requirePins: true,
 });

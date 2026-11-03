@@ -707,7 +707,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
 /** Package version, kept equal to package.json (checked by the test suite). */
-export const VERSION = "0.2.6";
+export const VERSION = "0.2.7";
 
 /**
  * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.

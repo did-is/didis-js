@@ -4,6 +4,17 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-03
+
+### Fixed
+
+- Correct first-party license attribution to DID.is; MIT permission and disclaimer terms are unchanged.
+
+### Migration
+
+- This release includes the execution-guard hardening and response types described under 0.2.6 below. **Upgrading from 0.2.5 is not a backward-compatible patch:** configure an application-owned trusted root for every guard; TypeScript requires `root` statically and Python enforces it at runtime with `GUARD_MISCONFIGURED`. Never derive the trusted root from submitted chains or model output. Expired approval, awaited-definition and immutable-deadline checks remain enforced; definition pins do not authorize callers or guarantee tool behavior.
+- npm 0.2.6 was not published. 0.2.7 is the first npm release after 0.2.5 to deliver these changes; the 0.2.6 entry documents the earlier source release.
+
 ## [0.2.6] - 2026-11-03
 
 ### Fixed
@@ -87,7 +98,7 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.7...HEAD
 [0.2.6]: https://github.com/did-is/didis-js/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/did-is/didis-js/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/did-is/didis-js/compare/v0.2.3...v0.2.4
@@ -96,3 +107,5 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 [0.2.1]: https://github.com/did-is/didis-js/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/did-is/didis-js/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/did-is/didis-js/releases/tag/v0.1.0
+
+[0.2.7]: https://github.com/did-is/didis-js/compare/v0.2.6...v0.2.7

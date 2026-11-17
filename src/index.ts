@@ -110,7 +110,24 @@ export interface ServiceEvidence {
   id: string;
   type: unknown;
   endpoint: unknown;
+  origin?: string;
+  originBindingStatus?: string;
+  configurationSha256?: string;
   notes: string[];
+}
+
+export interface OperatorBindingEvidence {
+  status: "VERIFIED" | "KEY_BOUND" | "UNVERIFIED_LINK" | "NOT_DECLARED" | "INVALID" | "INDETERMINATE" | string;
+  declaredDid?: string;
+  claimSource: "MCP_DISCOVER_META" | "A2A_CARD_SIGNATURE" | "NONE" | string;
+  endpointOrigin: string;
+  didOrigin?: string;
+  didServiceId?: string;
+  reverseDeclaration?: "DID_SERVICE_ENDPOINT" | "DID_ALSO_KNOWN_AS" | "SAME_DID_ORIGIN" | string;
+  configurationStatus?: string;
+  configurationUrl?: string;
+  configurationSha256?: string;
+  detail: string;
 }
 
 export interface DocumentEvidence {
@@ -217,12 +234,51 @@ export interface GraphNode {
   facts: [string, string][];
 }
 
+/** DID.is-native, relation-specific provenance; not an independent proof or new verdict. */
+export interface GraphProvenance {
+  profile: string;
+  method: string;
+  evidenceRefs: string[];
+  observedAt: string;
+  verifier: { name: string; version: string };
+  sourceUri?: string;
+  hashes: [string, string][];
+  validFrom?: string;
+  validUntil?: string;
+  limitations: string[];
+}
+
+export interface GraphCoverage {
+  scope: string;
+  keysShown: number;
+  keysTotal: number;
+  servicesShown: number;
+  servicesTotal: number;
+  aliasesShown: number;
+  aliasesTotal: number;
+  controllersShown: number;
+  controllersTotal: number;
+  truncated: boolean;
+  note: string;
+}
+
+export interface GraphObservation {
+  id: string;
+  did: string;
+  observedAt: string;
+  snapshotHash: string;
+  nodeCount: number;
+  edgeCount: number;
+  resolverVersion: string;
+}
+
 export interface GraphEdge {
   id: string;
   from: string;
   to: string;
   relation: string;
   state: "VERIFIED" | "OBSERVED" | "DECLARED" | "FAILED" | string;
+  provenance?: GraphProvenance;
 }
 
 export interface Evidence {
@@ -246,7 +302,7 @@ export interface EnrichedResolution {
   verdict: Verdict;
   dimensions: EvidenceDimension[];
   evidence: Evidence;
-  graph: { nodes: GraphNode[]; edges: GraphEdge[] };
+  graph: { nodes: GraphNode[]; edges: GraphEdge[]; coverage?: GraphCoverage };
   trace: TraceStage[];
   limitations: string[];
   resolver: { name: string; version: string };
@@ -261,12 +317,26 @@ export interface Check {
   detail: string;
 }
 
+export interface OrganizationEvidence {
+  status: "CONFIRMED" | "UNANCHORED" | "INACTIVE" | "INVALID" | string;
+  lei: string;
+  carrier: "ISO_17442_2_EXTENSION" | "ETSI_ORG_IDENTIFIER" | string;
+  snapshotStatus: "MATCHED" | "NOT_FOUND" | "NOT_CONFIGURED" | "UNAVAILABLE" | string;
+  legalName?: string;
+  jurisdiction?: string;
+  entityStatus?: string;
+  registrationStatus?: string;
+  sourceAsOf?: string;
+  detail: string;
+}
+
 export interface IssuerTrust {
   anchor: "DID" | "X509_CERTIFICATE" | "ISSUER_METADATA" | "NONE";
   result: "NOT_APPLICABLE" | "NOT_ESTABLISHED" | "CALLER_ANCHORED" | "CHAIN_INVALID";
   trustedListChecked: false;
-  chain?: { sha256: string; subjectCn?: string; issuerCn?: string; notAfter?: string }[];
+  chain?: { sha256: string; subjectCn?: string; issuerCn?: string; notAfter?: string; lei?: string }[];
   metadataUrl?: string;
+  organization?: OrganizationEvidence;
   proves: string;
   doesNotProve: string;
 }
@@ -418,6 +488,7 @@ export interface McpInspection {
   checks: Check[];
   headline: string;
   tls?: TlsEvidence;
+  operatorBinding?: OperatorBindingEvidence;
   limitations: string[];
 }
 
@@ -442,6 +513,7 @@ export interface A2aInspection {
   headline: string;
   card: unknown;
   tls?: TlsEvidence;
+  operatorBinding?: OperatorBindingEvidence;
   limitations: string[];
 }
 
@@ -576,12 +648,60 @@ export interface PolicyRules {
   maxCacheAgeSeconds?: number;
   credentialStatus?: "active";
   credentialIssuerMustBeSubject?: boolean;
+  /** 20-character ISO 17442-1 Legal Entity Identifier verified via caller-anchored X.509 certificate. */
+  organizationLei?: string;
+}
+
+export interface SavedPolicyRefMeta {
+  slug: string;
+  version: number;
+  reference: string;
+  rulesSha256: string;
+}
+
+export interface PolicyVersionView {
+  version: number;
+  reference: string;
+  description?: string;
+  rules: PolicyRules;
+  rulesSha256: string;
+  createdAt: number;
+}
+
+export interface SavedPolicyProfile {
+  slug: string;
+  currentVersion: number;
+  latestReference: string;
+  pinnedReference: string;
+  description?: string;
+  rules: PolicyRules;
+  rulesSha256: string;
+  createdAt: number;
+  updatedAt: number;
+  versions: PolicyVersionView[];
+}
+
+export interface CustomerPoliciesResponse {
+  policies: SavedPolicyProfile[];
+  limits: {
+    active: number;
+    retained: number;
+    versionsPerPolicy: number;
+    descriptionChars: number;
+  };
+}
+
+export interface PolicyEvaluateOptions {
+  /** Optional caller-supplied X.509 trust anchors (PEM or base64 DER) for SD-JWT VC `x5c` chains. */
+  trustedIssuerCertificates?: string[];
 }
 
 export interface PolicyResponse {
   evaluation: PolicyEvaluation;
   credential: CredentialVerification | null;
   resolution: { verdict: Verdict; dimensions: EvidenceDimension[] } | null;
+  /** Present when evaluated via `evaluatePolicyRef` against a saved team policy. */
+  savedPolicy?: SavedPolicyRefMeta;
 }
 
 export interface HealthStatus {
@@ -600,6 +720,9 @@ export interface HistoryResponse {
   count: number;
   history: ObservationRecord[];
   note: string;
+  graphHistory?: GraphObservation[];
+  graphHistoryStatus?: string;
+  graphHistoryNote?: string;
 }
 
 export interface GraphResponse {
@@ -608,6 +731,11 @@ export interface GraphResponse {
   verdict: Verdict;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  evidence?: Evidence;
+  coverage?: GraphCoverage;
+  resolver?: { name: string; version: string };
+  observation?: GraphObservation;
+  note?: string;
 }
 
 export interface FastVerifyDidResult {
@@ -707,7 +835,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const DEFAULT_BASE_URL = "https://did.is/api";
 
 /** Package version, kept equal to package.json (checked by the test suite). */
-export const VERSION = "0.2.7";
+export const VERSION = "0.2.8";
 
 /**
  * Identifies the SDK to the API so DID.is can count SDK use apart from other HTTP clients.
@@ -896,8 +1024,32 @@ export class DidisClient {
     });
   }
 
-  evaluatePolicy(did: string, policy: { name?: string; rules: PolicyRules }, credential?: unknown): Promise<PolicyResponse> {
-    return this.request("POST", "/v1/policies/evaluate", { did, policy, credential });
+  evaluatePolicy(did: string, policy: { name?: string; rules: PolicyRules }, credential?: unknown, options: PolicyEvaluateOptions = {}): Promise<PolicyResponse> {
+    const body = {
+      did,
+      policy,
+      ...(credential !== undefined ? { credential } : {}),
+      ...(options.trustedIssuerCertificates ? { trustedIssuerCertificates: options.trustedIssuerCertificates } : {}),
+    };
+    if (this.apiKey) return this.paid("POST", "policy/evaluate", body);
+    return this.request("POST", "/v1/policies/evaluate", { did, policy, credential, ...(options.trustedIssuerCertificates ? { trustedIssuerCertificates: options.trustedIssuerCertificates } : {}) });
+  }
+
+  /** Evaluates a saved team policy (`slug` or `slug:vN`) privately via `/v1/customer/policy/evaluate` (requires `apiKey`). */
+  evaluatePolicyRef(did: string, policyRef: string, credential?: unknown, options: PolicyEvaluateOptions = {}): Promise<PolicyResponse> {
+    if (!this.apiKey) return Promise.reject(new Error("apiKey is required for evaluatePolicyRef()"));
+    return this.paid("POST", "policy/evaluate", {
+      did,
+      policyRef,
+      ...(credential !== undefined ? { credential } : {}),
+      ...(options.trustedIssuerCertificates ? { trustedIssuerCertificates: options.trustedIssuerCertificates } : {}),
+    });
+  }
+
+  /** Lists active saved team policy profiles and immutable version history (requires `apiKey`). */
+  policies(): Promise<CustomerPoliciesResponse> {
+    if (!this.apiKey) return Promise.reject(new Error("apiKey is required for policies()"));
+    return this.paid("GET", "policies");
   }
 
   inspectMcp(endpoint: string): Promise<McpInspection> {

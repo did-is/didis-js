@@ -3,7 +3,7 @@
 Official TypeScript/JavaScript SDK for the [DID.is](https://did.is) public API: DID resolution with evidence, W3C DID Resolution, verifiable credentials, explicit policies, and MCP/A2A agent trust. Works anywhere `fetch` exists: Node 18+, Deno, Bun, browsers and edge runtimes. Zero dependencies, fully typed, ESM.
 
 
-Current release: **0.2.7**. See [CHANGELOG.md](CHANGELOG.md) for root-required guard migration and corrected first-party license attribution.
+Current release: **0.2.8**. See [CHANGELOG.md](CHANGELOG.md) for saved team policy / `organizationLei` contracts, guard `policyGate` and `expectedOperatorDid`, Graph provenance types, and the 0.2.7 root-required guard migration.
 
 ## Install
 
@@ -117,10 +117,11 @@ Guarding MCP clients, LangChain and the OpenAI Agents SDK: see [`examples/`](exa
 
 - The definition check is local (RFC 8785 JCS + SHA-256, the same `definitionSha256` DID.is reports) and makes no network call.
 - The delegation check calls `verifyTool`. An ALLOW is reused for 30 s by default (`allowCacheMs`), never past a parseable delegation expiry. Expired approvals are refused even on first use or with caching disabled. Approval deadlines and pins are rechecked after awaited work and immediately before execution; DENY and errors never fall back to stale approvals. Missing/unparseable expiry retains TTL-only behavior. This is a pre-execution boundary, not caller authentication, replay prevention, resource binding or per-stream reauthorization.
-- Error codes: `TOOL_DRIFT`, `TOOL_DEFINITION_MISSING`, `TOOL_NOT_AUTHORIZED`, `GUARD_UNAVAILABLE`, `GUARD_MISCONFIGURED`.
-- One tool only: `withDidisGuard(handler, { client, agent, root, tool, capability, pin, definition })`.
+- Error codes: `TOOL_DRIFT`, `TOOL_DEFINITION_MISSING`, `TOOL_NOT_AUTHORIZED`, `POLICY_NOT_SATISFIED`, `OPERATOR_NOT_VERIFIED`, `GUARD_UNAVAILABLE`, `GUARD_MISCONFIGURED`.
+- Optional `policyGate` (`{ policy }` or saved `{ policyRef }`, plus optional `credential` and `trustedIssuerCertificates`) evaluates DID/credential/organization LEI rules before delegation checks and refuses non-`PASS` results with `POLICY_NOT_SATISFIED`.
+- One tool only: `withDidisGuard(handler, { client, agent, root, tool, capability, pin, definition, policyGate })`.
 - `onDecision` and `DidisGuardError.detail` include both `tool` and `capability`.
-- `attestMcpPins(client, endpoint, pins)` asks DID.is to inspect a public MCP server and compares its hashes with your pins. Run it at startup or deploy time, not per call: it is an outbound, rate-limited request, and servers that need login or run on a private network cannot be inspected.
+- `attestMcpPins(client, endpoint, pins, { expectedOperatorDid })` asks DID.is to inspect a public MCP server, compares its hashes with your pins, and optionally requires bidirectional `operatorBinding` (`VERIFIED`) for `expectedOperatorDid`. Run it at startup or deploy time, not per call: it is an outbound, rate-limited request, and servers that need login or run on a private network cannot be inspected.
 
 ## Webhooks
 
@@ -161,7 +162,8 @@ const ok = await verifyWebhookSignature(
 | `stream(did)` | `GET /v1/stream/{did}` |
 | `history(did)` / `diff(did, from?, to?)` / `graph(did)` | `GET /v1/history`, `/v1/diff`, `/v1/graph` |
 | `verifyCredential(vc)` | `POST /v1/credentials/verify` |
-| `evaluatePolicy(did, policy, vc?)` | `POST /v1/policies/evaluate` |
+| `evaluatePolicy(did, policy, vc?, opts?)` | `POST /v1/policies/evaluate` (or `/v1/customer/policy/evaluate` with `apiKey`) |
+| `evaluatePolicyRef(did, policyRef, vc?, opts?)` / `policies()` (with `apiKey`) | `POST /v1/customer/policy/evaluate`, `GET /v1/customer/policies` |
 | `inspectMcp(endpoint)` / `inspectA2a(url)` | `GET /v1/mcp/inspect`, `/v1/a2a/inspect` |
 | `verifyDelegation(chain, opts)` / `authorize(chain, tool, opts)` / `verifyTool(agent, tool, root?)` | `/v1/agents/*` |
 | `fastVerifyDid(did)` / `fastVerifyJws(jws, relationship?)` | `/v1/fast-verify/*` |

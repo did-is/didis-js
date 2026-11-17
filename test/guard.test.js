@@ -197,3 +197,113 @@ test('MCP pin attestation is requested-pin scoped on partial and rejects duplica
   const {client} = fakeClient([{body:{status:'INSPECTED',inventoryHash:'subset',inventoryComplete:false,tools:[{name:'reviewed',definitionSha256:'pin'},{name:'reviewed',definitionSha256:'pin'}]}}]);
   assert.equal((await attestMcpPins(client,'https://example.invalid/mcp',{reviewed:'pin'})).ok,false);
 });
+
+test("mutating the captured definition while final SHA-256 awaits cannot reuse its approved digest", async () => {
+  for (const wrapped of [false, true]) {
+    const def = weather("approved"); const pins = await pinToolDefinitions([def]);
+    const { client } = fakeClient(() => allow("weather:forecast"));
+    let reads = 0, executions = 0;
+    const guard = createDidisGuard({ client, agent: AGENT, root: ROOT, pins, requirePins: true });
+    const call = { tool: "get_weather", capability: "weather:forecast", definition() {
+      reads++;
+      if (reads === 2) queueMicrotask(() => queueMicrotask(() => { def.description = "Changed during hash await"; }));
+      return def;
+    } };
+    await rejectsWith(wrapped ? guard.wrap(call, () => { executions++; })() : guard.check(call), "TOOL_DRIFT");
+    assert.equal(executions, 0); assert.equal(reads, 2);
+    assert.notEqual(await toolDefinitionSha256(def), pins.get_weather);
+  }
+});
+
+test("deadline is checked after the final synchronous definition comparison, not only before it", async () => {
+  const realNow = Date.now, fixed = realNow(); let now = fixed, reads = 0, armed = false, executions = 0;
+  const def = weather("approved");
+  Object.defineProperty(def, "description", { enumerable: true, get() {
+    // canonicalJson reads each value once for filtering and once for serialization.
+    if (armed && ++reads === 12) now = fixed + 1_000;
+    return "approved";
+  } });
+  const pins = await pinToolDefinitions([def]);
+  Date.now = () => now;
+  try {
+    const { client } = fakeClient(() => allow("weather:forecast", { expires: new Date(fixed + 1_000).toISOString() }));
+    const guard = createDidisGuard({ client, agent: AGENT, root: ROOT, pins, requirePins: true, allowCacheMs: 0 });
+    armed = true;
+    await rejectsWith(guard.wrap({ tool: "get_weather", capability: "weather:forecast", definition: () => def }, () => { executions++; })(), "TOOL_NOT_AUTHORIZED");
+    assert.equal(executions, 0); assert.equal(now, fixed + 1_000);
+  } finally { Date.now = realNow; }
+});
+
+test("policyGate enforces inline policy and saved policyRef before tool execution", async () => {
+  const passEval = (did = AGENT) => ({ body: { evaluation: { did, status: "PASS", headline: "All 1 evaluated rules pass.", rulesEvaluated: 1, rulesPassed: 1, evaluations: [], evaluatedAt: "2026-11-13T00:00:00Z" }, credential: null, resolution: null } });
+  const failEval = (status = "INDETERMINATE") => ({ body: { evaluation: { did: AGENT, status, headline: "Organization LEI not confirmed.", rulesEvaluated: 1, rulesPassed: 0, evaluations: [], evaluatedAt: "2026-11-13T00:00:00Z" }, credential: null, resolution: null } });
+
+  // Misconfiguration rejected synchronously
+  const { client: c0 } = fakeClient([]);
+  assert.throws(() => createDidisGuard({ client: c0, agent: AGENT, root: ROOT, policyGate: {} }), (e) => e.code === "GUARD_MISCONFIGURED");
+  assert.throws(() => createDidisGuard({ client: c0, agent: AGENT, root: ROOT, policyGate: { policy: { rules: {} }, policyRef: "partner-strict" } }), (e) => e.code === "GUARD_MISCONFIGURED");
+  assert.throws(() => createDidisGuard({ client: c0, agent: AGENT, root: ROOT, policyGate: { policyRef: "BAD SLUG" } }), (e) => e.code === "GUARD_MISCONFIGURED");
+
+  // INDETERMINATE / FAIL policy blocks before verifyTool and is never cached
+  const blocked = fakeClient([failEval("INDETERMINATE"), failEval("FAIL"), passEval(), allow("weather:forecast")]);
+  const g1 = createDidisGuard({
+    client: blocked.client,
+    agent: AGENT,
+    root: ROOT,
+    policyGate: { policy: { rules: { organizationLei: "529900T8BM49AURSDO55" } }, credential: "jwt~", trustedIssuerCertificates: ["-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----"] },
+  });
+  await rejectsWith(g1.check({ tool: "weather_forecast", capability: "weather:forecast" }), "POLICY_NOT_SATISFIED");
+  await rejectsWith(g1.check({ tool: "weather_forecast", capability: "weather:forecast" }), "POLICY_NOT_SATISFIED");
+  assert.equal(blocked.calls.length, 2); // verifyTool was never called
+  await g1.check({ tool: "weather_forecast", capability: "weather:forecast" });
+  assert.equal(blocked.calls.length, 4); // policy + verifyTool
+  // Cached within allowCacheMs
+  await g1.check({ tool: "weather_forecast", capability: "weather:forecast" });
+  assert.equal(blocked.calls.length, 4);
+
+  // Saved policyRef with apiKey routes to /v1/customer/policy/evaluate
+  const paidCalls = [];
+  const paidClient = new DidisClient({
+    baseUrl: "http://x",
+    apiKey: "didis_k_test",
+    fetch: async (url, init = {}) => {
+      paidCalls.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.authorization });
+      if (url.endsWith("/v1/customer/policy/evaluate")) {
+        return new Response(JSON.stringify({ ...passEval().body, savedPolicy: { slug: "acme-lei", version: 2, reference: "acme-lei:v2", rulesSha256: "a".repeat(64) } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify(allow("weather:forecast").body), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const gRef = createDidisGuard({ client: paidClient, agent: AGENT, root: ROOT, policyGate: { policyRef: "acme-lei:v2" } });
+  await gRef.check({ tool: "weather_forecast", capability: "weather:forecast" });
+  assert.equal(paidCalls[0].url, "http://x/v1/customer/policy/evaluate");
+  assert.equal(paidCalls[0].body.policyRef, "acme-lei:v2");
+  assert.equal(paidCalls[0].auth, "Bearer didis_k_test");
+});
+
+test("attestMcpPins optionally enforces bidirectional operatorBinding", async () => {
+  const pins = await pinToolDefinitions([weather("x")]);
+  const verified = fakeClient([{
+    body: {
+      status: "INSPECTED",
+      inventoryHash: "h",
+      tools: [{ name: "get_weather", definitionSha256: pins.get_weather }],
+      operatorBinding: { status: "VERIFIED", declaredDid: "did:web:mcp.example", claimSource: "MCP_DISCOVER_META", endpointOrigin: "https://mcp.example", detail: "verified" },
+    },
+  }]);
+  const ok = await attestMcpPins(verified.client, "https://mcp.example/mcp", pins, { expectedOperatorDid: "did:web:mcp.example" });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.operatorVerified, true);
+
+  const unverified = fakeClient([{
+    body: {
+      status: "INSPECTED",
+      inventoryHash: "h",
+      tools: [{ name: "get_weather", definitionSha256: pins.get_weather }],
+      operatorBinding: { status: "UNVERIFIED_LINK", declaredDid: "did:web:mcp.example", claimSource: "MCP_DISCOVER_META", endpointOrigin: "https://mcp.example", detail: "missing reverse proof" },
+    },
+  }]);
+  const bad = await attestMcpPins(unverified.client, "https://mcp.example/mcp", pins, { expectedOperatorDid: "did:web:mcp.example" });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.operatorVerified, false);
+});

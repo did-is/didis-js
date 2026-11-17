@@ -4,6 +4,17 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-17
+
+### Fixed
+
+- Retain the checked tool definition's canonical bytes and compare its captured object synchronously after asynchronous SHA-256 and immediately before handler invocation. Shared-object mutation during the final hash can no longer reuse the pre-mutation approved digest. Check each call's immutable authorization deadline after the final synchronous definition comparison as well. The explicit-root, per-call deadline, cache, error-code and optional-expiry wire contracts are preserved; this is still a local pre-dispatch check, not an atomic pin on a remote implementation.
+
+### Added
+
+- Saved team policy and organization LEI SDK contracts (`PolicyRules.organizationLei`, `OrganizationEvidence`, `OperatorBindingEvidence`, `SavedPolicyProfile`, `evaluatePolicyRef`, `policies`, and `trustedIssuerCertificates` on `evaluatePolicy`), plus optional fail-closed `policyGate` (`POLICY_NOT_SATISFIED`) on `createDidisGuard` / `withDidisGuard` and `expectedOperatorDid` verification on `attestMcpPins`.
+- Optional relation-specific Graph provenance, bounded projection coverage and immutable public Graph observation response types. Historical Graph selection is a same-route API extension; an old resolver's live response must not be mistaken for a selected observation. Existing required response fields and verification meanings are unchanged.
+
 ## [0.2.7] - 2026-11-03
 
 ### Fixed
@@ -98,7 +109,9 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 - `DidisError` carrying the RFC 9457 problem body and `Retry-After`.
 - Webhook helpers `verifyWebhookSignature` and `verifyCustomerMonitorSignature`.
 
-[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/did-is/didis-js/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/did-is/didis-js/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/did-is/didis-js/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/did-is/didis-js/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/did-is/didis-js/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/did-is/didis-js/compare/v0.2.3...v0.2.4
@@ -107,5 +120,3 @@ All notable changes to `@didis/client` are listed here. The format follows [Keep
 [0.2.1]: https://github.com/did-is/didis-js/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/did-is/didis-js/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/did-is/didis-js/releases/tag/v0.1.0
-
-[0.2.7]: https://github.com/did-is/didis-js/compare/v0.2.6...v0.2.7
